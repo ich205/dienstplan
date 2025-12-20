@@ -2986,7 +2986,9 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
 
     const totalAttempts = settings.attempts;
     // Progress-Updates: bei 100.000 Versuchen nicht zu chatty
-    const chunkSize = clamp(Math.round(totalAttempts / 200), 50, 2000);
+    const progressEvery = clamp(Math.round(totalAttempts / 200), 50, 2000);
+    const timeCheckEvery = 50;
+    const yieldIntervalMs = 50;
     const nowMs = () => (
       (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
         ? performance.now()
@@ -3008,15 +3010,22 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
         bestAttempt = attempt;
       }
 
-      const shouldProgress = (((i + 1) % chunkSize) === 0 || (i + 1) === totalAttempts);
-      const now = nowMs();
-      if ((typeof onProgress === 'function' && shouldProgress) || (now - lastYield) > 250){
-        if (typeof onProgress === 'function'){
-          onProgress(i + 1, totalAttempts, { bestCost, elapsedMs: (now - t0) });
+      const shouldProgress = (((i + 1) % progressEvery) === 0 || (i + 1) === totalAttempts);
+      let didProgress = false;
+
+      if (typeof onProgress === 'function' && shouldProgress){
+        const now = nowMs();
+        onProgress(i + 1, totalAttempts, { bestCost, elapsedMs: (now - t0) });
+        didProgress = true;
+      }
+
+      if (didProgress || ((i + 1) % timeCheckEvery) === 0){
+        const now = nowMs();
+        if (didProgress || (now - lastYield) >= yieldIntervalMs){
+          // UI repaint ermöglichen (verhindert Browser-Abbruch bei vielen Versuchen)
+          await nextFrame();
+          lastYield = now;
         }
-        // UI repaint ermöglichen (verhindert Browser-Abbruch bei vielen Versuchen)
-        await nextFrame();
-        lastYield = now;
       }
     }
 
