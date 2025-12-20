@@ -52,6 +52,7 @@
   function parseMonthKey(monthKey){
     const [y, m] = String(monthKey || '').split('-').map(Number);
     if (!y || !m) return null;
+    if (m < 1 || m > 12) return null;
     return { y, m }; // m: 1..12
   }
 
@@ -213,6 +214,15 @@
 
   function clamp(n, min, max){
     return Math.max(min, Math.min(max, n));
+  }
+
+  function toNumber(value, fallback = 0){
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  function toInt(value, fallback = 0){
+    return Math.round(toNumber(value, fallback));
   }
 
   function round1(n){
@@ -483,15 +493,19 @@
   }
 
 
-function normalizeEmployee(emp){
+  function normalizeEmployee(emp){
     const basePrefs = defaultEmpPrefs();
 
     const safe = {
       id: emp && emp.id ? String(emp.id) : makeId(),
       name: String(emp && emp.name ? emp.name : '').trim() || 'Unbenannt',
-      weeklyHours: clamp(Number(emp && emp.weeklyHours ? emp.weeklyHours : 0), 0, 80),
+      weeklyHours: clamp(toNumber(emp && emp.weeklyHours ? emp.weeklyHours : 0, 0), 0, 80),
       // Stundenkonto: positive Zahl = Überstunden, negative = Minusstunden
-      balanceHours: round1(clamp(Number(((emp && (emp.balanceHours ?? emp.overtimeHours ?? emp.stundenkonto)) ?? 0)), -10000, 10000)),
+      balanceHours: round1(clamp(
+        toNumber((emp && (emp.balanceHours ?? emp.overtimeHours ?? emp.stundenkonto)) ?? 0, 0),
+        -10000,
+        10000
+      )),
       wishText: String(emp && (emp.wishText ?? emp.wishes ?? '') ? (emp.wishText ?? emp.wishes) : '').trim(),
       prefs: sanitizePrefs(emp && emp.prefs ? emp.prefs : basePrefs),
     };
@@ -531,7 +545,7 @@ function normalizeEmployee(emp){
       }
 
       // Normalize settings
-      state.settings.attempts = clamp(Math.round(Number(state.settings.attempts || 10000)), 10, 1000000);
+      state.settings.attempts = clamp(toInt(state.settings.attempts, 10000), 10, 1000000);
       state.settings.preferGaps = Boolean(state.settings.preferGaps);
 
       return state;
@@ -650,7 +664,7 @@ function normalizeEmployee(emp){
     }
 
     // Normalize settings
-    state.settings.attempts = clamp(Math.round(Number(state.settings.attempts || 10000)), 10, 1000000);
+    state.settings.attempts = clamp(toInt(state.settings.attempts, 10000), 10, 1000000);
     state.settings.preferGaps = Boolean(state.settings.preferGaps);
 
     ensureMonthStructures(state.month);
@@ -3143,7 +3157,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
   });
 
   attemptsInputEl.addEventListener('change', () => {
-    state.settings.attempts = clamp(Math.round(Number(attemptsInputEl.value || 10000)), 10, 1000000);
+    state.settings.attempts = clamp(toInt(attemptsInputEl.value, 10000), 10, 1000000);
     attemptsInputEl.value = state.settings.attempts;
     saveState();
   });
@@ -3155,7 +3169,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
 
   addEmpBtn.addEventListener('click', () => {
     const name = String(newEmpNameEl.value || '').trim();
-    const weeklyHours = Number(newEmpHoursEl.value || 0);
+    const weeklyHours = toNumber(newEmpHoursEl.value, 0);
 
     if (!name){
       alert('Bitte einen Namen eingeben.');
@@ -3325,7 +3339,7 @@ blockTableEl.addEventListener('click', (ev) => {
       return;
     }
 
-    const totalAttempts = clamp(Math.round(Number(state.settings.attempts || 10000)), 10, 1000000);
+    const totalAttempts = clamp(toInt(state.settings.attempts, 10000), 10, 1000000);
 
     try{
       generateBtn.disabled = true;
@@ -3416,7 +3430,7 @@ blockTableEl.addEventListener('click', (ev) => {
         state.month = base.month;
       }
 
-      state.settings.attempts = clamp(Math.round(Number(state.settings.attempts || 10000)), 10, 1000000);
+      state.settings.attempts = clamp(toInt(state.settings.attempts, 10000), 10, 1000000);
       state.settings.preferGaps = Boolean(state.settings.preferGaps);
 
       ensureMonthStructures(state.month);
