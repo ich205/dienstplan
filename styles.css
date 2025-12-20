@@ -795,6 +795,47 @@ code{
   gap: 8px;
 }
 
+/* ---- Hours notes (screen) ---- */
+.hours-notes{
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.hours-notes h3{
+  margin: 0;
+  font-size: 14px;
+}
+
+.hours-note-list{
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+
+.hours-note{
+  list-style: disc;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.03);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.hours-note.warn{
+  border-color: rgba(255,209,102,.45);
+  background: rgba(255,209,102,.12);
+  color: #ffd166;
+}
+
+.hours-note.danger{
+  border-color: rgba(255,107,107,.45);
+  background: rgba(255,107,107,.12);
+  color: #ff6b6b;
+}
+
 
 /* ---- Progress (Berechnung) ---- */
 .hidden{ display: none !important; }

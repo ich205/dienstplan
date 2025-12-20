@@ -958,6 +958,7 @@ function normalizeEmployee(emp){
   const printHeaderEl = $('#printHeader');
   const planTableEl = $('#planTable');
   const hoursTableEl = $('#hoursTable');
+  const hoursNotesEl = $('#hoursNotes');
   const printHoursNotesEl = $('#printHoursNotes');
 
   // ---------- Progress helpers ----------
@@ -1247,6 +1248,7 @@ function renderEmployeeList(){
       messagesEl.innerHTML = `<div class="hint">Noch kein Dienstplan generiert.</div>`;
       planTableEl.innerHTML = '';
       hoursTableEl.innerHTML = '';
+      if (hoursNotesEl) hoursNotesEl.innerHTML = '';
       if (printHeaderEl) printHeaderEl.innerHTML = '';
       if (printHoursNotesEl) printHoursNotesEl.innerHTML = '';
       if (printBtn) printBtn.disabled = true;
@@ -1265,7 +1267,7 @@ function renderEmployeeList(){
 
     planTableEl.innerHTML = renderPlanTable(res);
     hoursTableEl.innerHTML = renderHoursTable(res);
-    renderPrintNotes(res);
+    renderHoursNotes(res);
 
     if (printBtn) printBtn.disabled = false;
 
@@ -1449,12 +1451,8 @@ function renderEmployeeList(){
     return `${thead}<tbody>${rows}</tbody>${foot}`;
   }
 
-  function renderPrintNotes(res){
-    if (!printHoursNotesEl) return;
-    if (!res){
-      printHoursNotesEl.innerHTML = '';
-      return;
-    }
+  function buildHoursNotes(res){
+    if (!res) return [];
 
     const notes = [];
     const messages = Array.isArray(res.messages) ? res.messages : [];
@@ -1473,44 +1471,73 @@ function renderEmployeeList(){
     if (missingIwdDays.length){
       notes.push({
         type: 'danger',
-        title: 'IWD nicht möglich',
+        title: 'Fehlender IWD',
         details: missingIwdDays.join(', '),
       });
     }
 
     const plannedTdDays = Array.isArray(res.plannedTdDays) ? res.plannedTdDays : [];
-    const savedTdDays = plannedTdDays
+    const missingTdDays = plannedTdDays
       .filter(idx => !res.schedule.td[idx])
       .sort((a,b) => a - b)
       .map(idx => res.days[idx]?.label)
       .filter(Boolean);
-    if (savedTdDays.length){
+    if (missingTdDays.length){
       notes.push({
         type: 'warn',
-        title: 'Gesparte TD2',
-        details: savedTdDays.join(', '),
+        title: 'Fehlender TD',
+        details: missingTdDays.join(', '),
       });
     }
 
-    if (notes.length === 0){
-      printHoursNotesEl.innerHTML = '';
-      return;
+    return notes;
+  }
+
+  function renderHoursNotes(res){
+    const notes = buildHoursNotes(res);
+    const hasNotes = notes.length > 0;
+
+    if (hoursNotesEl){
+      if (!hasNotes){
+        hoursNotesEl.innerHTML = '';
+      } else {
+        const items = notes.map(note => {
+          const cls = note.type === 'danger' ? 'danger' : 'warn';
+          return `
+            <li class="hours-note ${cls}">
+              <strong>${escapeHtml(note.title)}</strong>
+              <div>${escapeHtml(note.details)}</div>
+            </li>
+          `.trim();
+        }).join('');
+
+        hoursNotesEl.innerHTML = `
+          <h3>Hinweise</h3>
+          <ul class="hours-note-list">${items}</ul>
+        `.trim();
+      }
     }
 
-    const items = notes.map(note => {
-      const cls = note.type === 'danger' ? 'danger' : 'warn';
-      return `
-        <li class="print-note ${cls}">
-          <strong>${escapeHtml(note.title)}</strong>
-          <div>${escapeHtml(note.details)}</div>
-        </li>
-      `.trim();
-    }).join('');
+    if (printHoursNotesEl){
+      if (!hasNotes){
+        printHoursNotesEl.innerHTML = '';
+      } else {
+        const items = notes.map(note => {
+          const cls = note.type === 'danger' ? 'danger' : 'warn';
+          return `
+            <li class="print-note ${cls}">
+              <strong>${escapeHtml(note.title)}</strong>
+              <div>${escapeHtml(note.details)}</div>
+            </li>
+          `.trim();
+        }).join('');
 
-    printHoursNotesEl.innerHTML = `
-      <h3>Druck-Hinweise</h3>
-      <ul class="print-note-list">${items}</ul>
-    `.trim();
+        printHoursNotesEl.innerHTML = `
+          <h3>Druck-Hinweise</h3>
+          <ul class="print-note-list">${items}</ul>
+        `.trim();
+      }
+    }
   }
 
   // ---------- Scheduling Logic ----------
@@ -1727,8 +1754,8 @@ function renderEmployeeList(){
     if (!ed.allowedByDay[dayIdx]) score -= 260;
     if (prefs.allowIWD === false) score -= 900;
 
-    // Bedarf: Woche (stärker) + Monat (leichter)
-    score += remW * 4.0 + remM * 1.2;
+    // Bedarf: Monat wichtiger als Woche (mehr Monatsausgleich)
+    score += remW * 2.2 + remM * 1.6;
 
     // Abstand zwischen Einsätzen
     score += Math.min(gap, 14) * (ctx.settings.preferGaps ? 18 : 10);
@@ -1809,8 +1836,8 @@ function renderEmployeeList(){
     if (!ed.allowedByDay[dayIdx]) score -= 200;
     if (prefs.allowTD === false) score -= 750;
 
-    // Bedarf
-    score += remW * 2.6 + remM * 0.8;
+    // Bedarf (Monat etwas stärker gewichtet)
+    score += remW * 1.6 + remM * 1.2;
 
     // Abstand
     score += Math.min(gap, 14) * (ctx.settings.preferGaps ? 10 : 6);
@@ -1938,18 +1965,27 @@ function renderEmployeeList(){
       const seg = ctx.segments[si];
       const segIndices = seg.indices;
 
-      // Wochenbedarf
+      // Monatsbedarf anteilig auf verbleibende Segmente verteilen (mehr Monatsausgleich)
+      const remainingDays = ctx.segments.slice(si).reduce((sum, s) => sum + s.indices.length, 0);
+      const remainingMonthTotal = ctx.employees.reduce((sum, emp) => {
+        const rem = Number(remainingMonth[emp.id] || 0);
+        return sum + Math.max(0, rem);
+      }, 0);
+      const segmentTargetTotal = remainingDays > 0
+        ? remainingMonthTotal * (segIndices.length / remainingDays)
+        : 0;
+
+      // Wochenbedarf (weich: nicht über den verbleibenden Monatsbedarf hinaus)
       const remainingWeek = {};
-      let totalRequired = 0;
       for (const emp of ctx.employees){
         const req = Number(ctx.empDataById[emp.id]?.segRequired[si]) || 0;
-        remainingWeek[emp.id] = req;
-        totalRequired += req;
+        const remMonth = Number(remainingMonth[emp.id] || 0);
+        remainingWeek[emp.id] = Math.min(req, remMonth);
       }
 
       const baseIwd = segIndices.length * SHIFT.IWD.hours;
       const requiredTdCount = segIndices.reduce((n, idx) => n + (ctx.tdRequiredByDay[idx] ? 1 : 0), 0);
-      const autoTdCount = chooseTdCount(totalRequired, baseIwd, segIndices.length);
+      const autoTdCount = chooseTdCount(segmentTargetTotal, baseIwd, segIndices.length);
       const tdCount = clamp(Math.max(autoTdCount, requiredTdCount), 0, segIndices.length);
       const tdDays = chooseTdDaysCtx(ctx, segIndices, forcedOff, tdCount, ctx.tdRequiredByDay);
       plannedTdDays.push(...tdDays);
@@ -2138,7 +2174,7 @@ function renderEmployeeList(){
         const total = work + credit;
         const delta = total - target;
 
-        cost += Math.abs(delta) * 120 + (delta > 0 ? delta * 60 : 0);
+        cost += Math.abs(delta) * 50 + (delta > 0 ? delta * 25 : 0);
 
         // Week limits
         const p = ed.prefs;
@@ -2951,9 +2987,13 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
     const totalAttempts = settings.attempts;
     // Progress-Updates: bei 100.000 Versuchen nicht zu chatty
     const chunkSize = clamp(Math.round(totalAttempts / 200), 50, 2000);
-    const t0 = (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
-      ? performance.now()
-      : Date.now();
+    const nowMs = () => (
+      (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
+        ? performance.now()
+        : Date.now()
+    );
+    const t0 = nowMs();
+    let lastYield = t0;
 
     if (typeof onProgress === 'function'){
       onProgress(0, totalAttempts, { bestCost, elapsedMs: 0 });
@@ -2968,13 +3008,15 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
         bestAttempt = attempt;
       }
 
-      if (typeof onProgress === 'function' && (((i + 1) % chunkSize) === 0 || (i + 1) === totalAttempts)){
-        const now = (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
-          ? performance.now()
-          : Date.now();
-        onProgress(i + 1, totalAttempts, { bestCost, elapsedMs: (now - t0) });
-        // UI repaint ermöglichen
+      const shouldProgress = (((i + 1) % chunkSize) === 0 || (i + 1) === totalAttempts);
+      const now = nowMs();
+      if ((typeof onProgress === 'function' && shouldProgress) || (now - lastYield) > 250){
+        if (typeof onProgress === 'function'){
+          onProgress(i + 1, totalAttempts, { bestCost, elapsedMs: (now - t0) });
+        }
+        // UI repaint ermöglichen (verhindert Browser-Abbruch bei vielen Versuchen)
         await nextFrame();
+        lastYield = now;
       }
     }
 
