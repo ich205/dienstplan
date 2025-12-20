@@ -38,7 +38,11 @@
   function parseISODate(iso){
     // safer than new Date("YYYY-MM-DD") because of timezone parsing differences
     const [y, m, d] = String(iso).split('-').map(Number);
-    return new Date(y, (m || 1) - 1, d || 1);
+    if (!y || !m || !d) return null;
+    const date = new Date(y, m - 1, d);
+    if (Number.isNaN(date.getTime())) return null;
+    if (date.getFullYear() !== y || date.getMonth() !== m - 1 || date.getDate() !== d) return null;
+    return date;
   }
 
   function monthKeyFromDate(date){
@@ -172,6 +176,7 @@
 
   function holidayNameBerlin(isoDate){
     const dt = parseISODate(isoDate);
+    if (!dt) return '';
     const year = dt.getFullYear();
     const map = berlinHolidayMapForYear(year);
     return map[isoDate] || '';
@@ -554,8 +559,14 @@ function normalizeEmployee(emp){
   const CACHE_DB = 'dienstplan_generator_cache_db_v1';
   const CACHE_STORE = 'kv';
   const CACHE_KEY_HANDLE = 'cacheFileHandle';
+  const CACHE_KEY_DIR_HANDLE = 'cacheDirHandle';
+  const CACHE_KEY_LOG_HANDLE = 'cacheLogHandle';
+  const CACHE_FILE_NAME = 'dienstplan_cache.json';
+  const CACHE_LOG_NAME = 'dienstplan_cache.log';
 
   let cacheFileHandle = null;
+  let cacheDirHandle = null;
+  let cacheLogHandle = null;
   let cacheWriteTimer = null;
 
   function idbOpen(){
@@ -649,12 +660,17 @@ function normalizeEmployee(emp){
   }
 
   function cacheApiSupported(){
-    return !!(window.showOpenFilePicker && window.showSaveFilePicker && window.FileSystemFileHandle && window.indexedDB);
+    const filePicker = window.showDirectoryPicker || window.showSaveFilePicker;
+    return !!(filePicker && window.FileSystemFileHandle && window.indexedDB);
   }
 
   function setCacheStatus(msg){
     if (!cacheStatusEl) return;
     cacheStatusEl.innerHTML = msg || '';
+  }
+
+  function setCacheError(msg){
+    setCacheStatus(`⚠️ ${escapeHtml(msg)}. Nutze Export/Import.`);
   }
 
   function updateCacheUi(){
@@ -664,7 +680,11 @@ function normalizeEmployee(emp){
 
     if (cacheSupportEl){
       if (supported){
-        cacheSupportEl.innerHTML = `✅ Dein Browser unterstützt die Cache-Datei-Funktion.`;
+        if (window.showDirectoryPicker){
+          cacheSupportEl.innerHTML = `✅ Dein Browser unterstützt die Cache-Datei-Funktion. Wähle den App-Ordner, damit Cache und Log dort gespeichert werden.`;
+        } else {
+          cacheSupportEl.innerHTML = `✅ Dein Browser unterstützt die Cache-Datei-Funktion. Wähle nach Möglichkeit denselben Ordner wie die App.`;
+        }
       } else {
         cacheSupportEl.innerHTML = `ℹ️ Dein Browser unterstützt das direkte Schreiben in eine Datei evtl. nicht. Nutze dann bitte Export/Import.`;
       }
@@ -678,7 +698,8 @@ function normalizeEmployee(emp){
     if (disconnectCacheBtn) disconnectCacheBtn.disabled = !supported || !connected;
 
     if (connected){
-      setCacheStatus(`Verbunden: <strong>dienstplan_cache.json</strong> (Auto-Speichern aktiv)`);
+      const details = cacheDirHandle ? 'Ordner ausgewählt' : 'Datei ausgewählt';
+      setCacheStatus(`Verbunden: <strong>${CACHE_FILE_NAME}</strong> (${details}, Auto-Speichern aktiv)`);
     } else {
       setCacheStatus(`Nicht verbunden.`);
     }
@@ -691,14 +712,30 @@ function normalizeEmployee(emp){
         return;
       }
 
-      const handle = await idbGet(CACHE_KEY_HANDLE);
-      if (handle){
-        cacheFileHandle = handle;
+      const [handle, dirHandle, logHandle] = await Promise.all([
+        idbGet(CACHE_KEY_HANDLE),
+        idbGet(CACHE_KEY_DIR_HANDLE),
+        idbGet(CACHE_KEY_LOG_HANDLE),
+      ]);
+      if (dirHandle) cacheDirHandle = dirHandle;
+      if (handle) cacheFileHandle = handle;
+      if (logHandle) {
+        cacheLogHandle = logHandle;
+      } else if (cacheDirHandle) {
+        try{
+          cacheLogHandle = await cacheDirHandle.getFileHandle(CACHE_LOG_NAME, { create: true });
+          await idbSet(CACHE_KEY_LOG_HANDLE, cacheLogHandle);
+        }catch(e){
+          console.warn('Logdatei konnte nicht wiederhergestellt werden', e);
+        }
       }
       updateCacheUi();
     }catch(e){
       console.warn('Cache-Handle konnte nicht geladen werden', e);
       cacheFileHandle = null;
+      cacheDirHandle = null;
+      cacheLogHandle = null;
+      setCacheError('Cache-Handle konnte nicht geladen werden');
       updateCacheUi();
     }
   }
@@ -709,31 +746,71 @@ function normalizeEmployee(emp){
       return;
     }
 
-    try{
-      cacheFileHandle = await window.showSaveFilePicker({
-        suggestedName: 'dienstplan_cache.json',
-        types: [
-          { description: 'JSON', accept: { 'application/json': ['.json'] } }
-        ],
-      });
+    const consent = confirm('Soll der Cache zusammen mit einer Logdatei im App-Ordner gespeichert werden? Dein Browser fragt gleich nach Zugriff auf den Ordner.');
+    if (!consent) return;
 
-      await idbSet(CACHE_KEY_HANDLE, cacheFileHandle);
+    try{
+      if (window.showDirectoryPicker){
+        cacheDirHandle = await window.showDirectoryPicker();
+        cacheFileHandle = await cacheDirHandle.getFileHandle(CACHE_FILE_NAME, { create: true });
+        cacheLogHandle = await cacheDirHandle.getFileHandle(CACHE_LOG_NAME, { create: true });
+        await Promise.all([
+          idbSet(CACHE_KEY_DIR_HANDLE, cacheDirHandle),
+          idbSet(CACHE_KEY_HANDLE, cacheFileHandle),
+          idbSet(CACHE_KEY_LOG_HANDLE, cacheLogHandle),
+        ]);
+      }else{
+        cacheFileHandle = await window.showSaveFilePicker({
+          suggestedName: CACHE_FILE_NAME,
+          types: [
+            { description: 'JSON', accept: { 'application/json': ['.json'] } }
+          ],
+        });
+        cacheLogHandle = await window.showSaveFilePicker({
+          suggestedName: CACHE_LOG_NAME,
+          types: [
+            { description: 'Log', accept: { 'text/plain': ['.log', '.txt'] } }
+          ],
+        });
+        cacheDirHandle = null;
+        if (!cacheLogHandle){
+          setCacheError('Logdatei nicht ausgewählt');
+          cacheFileHandle = null;
+          updateCacheUi();
+          return;
+        }
+        await Promise.all([
+          idbSet(CACHE_KEY_HANDLE, cacheFileHandle),
+          idbSet(CACHE_KEY_DIR_HANDLE, null),
+          idbSet(CACHE_KEY_LOG_HANDLE, cacheLogHandle),
+        ]);
+      }
 
       await saveToCacheFile(); // initial write
+      await appendCacheLog('Cache-Datei verbunden.');
       updateCacheUi();
     }catch(e){
       // User cancelled => ignore
       console.warn('Cache-Datei verbinden abgebrochen/fehlgeschlagen', e);
+      setCacheError('Cache-Datei verbinden fehlgeschlagen');
       updateCacheUi();
     }
   }
 
   async function disconnectCacheFile(){
+    await appendCacheLog('Cache-Datei getrennt.');
     cacheFileHandle = null;
+    cacheDirHandle = null;
+    cacheLogHandle = null;
     try{
-      await idbDel(CACHE_KEY_HANDLE);
+      await Promise.all([
+        idbDel(CACHE_KEY_HANDLE),
+        idbDel(CACHE_KEY_DIR_HANDLE),
+        idbDel(CACHE_KEY_LOG_HANDLE),
+      ]);
     }catch(e){
       console.warn('Cache-Handle konnte nicht gelöscht werden', e);
+      setCacheError('Cache-Handle konnte nicht gelöscht werden');
     }
     updateCacheUi();
   }
@@ -748,10 +825,12 @@ function normalizeEmployee(emp){
       await writable.write(JSON.stringify(projectSnapshot(), null, 2));
       await writable.close();
 
-      setCacheStatus(`Verbunden: <strong>dienstplan_cache.json</strong> (zuletzt gespeichert: ${new Date().toLocaleString()})`);
+      await appendCacheLog('Cache-Datei gespeichert.');
+      setCacheStatus(`Verbunden: <strong>${CACHE_FILE_NAME}</strong> (zuletzt gespeichert: ${new Date().toLocaleString()})`);
     }catch(e){
       console.warn('In Cache-Datei speichern fehlgeschlagen', e);
-      setCacheStatus(`⚠️ Speichern in Cache-Datei fehlgeschlagen. Nutze Export/Import.`);
+      setCacheError('Speichern in Cache-Datei fehlgeschlagen');
+      await appendCacheLog(`Fehler beim Speichern: ${String(e && e.message ? e.message : e)}`);
     }
   }
 
@@ -768,10 +847,28 @@ function normalizeEmployee(emp){
       if (!obj || typeof obj !== 'object') throw new Error('Ungültige Cache-Datei.');
 
       loadProjectObject(obj);
+      await appendCacheLog('Cache-Datei geladen.');
       setCacheStatus(`✅ Aus Cache-Datei geladen (${new Date().toLocaleString()})`);
     }catch(e){
       console.warn('Aus Cache-Datei laden fehlgeschlagen', e);
-      setCacheStatus(`⚠️ Laden fehlgeschlagen. Nutze Export/Import.`);
+      setCacheError('Laden fehlgeschlagen');
+      await appendCacheLog(`Fehler beim Laden: ${String(e && e.message ? e.message : e)}`);
+    }
+  }
+
+  async function appendCacheLog(message){
+    if (!cacheLogHandle) return;
+    try{
+      const perm = await cacheLogHandle.requestPermission({ mode: 'readwrite' });
+      if (perm !== 'granted') return;
+      const file = await cacheLogHandle.getFile();
+      const writable = await cacheLogHandle.createWritable({ keepExistingData: true });
+      await writable.seek(file.size);
+      const stamp = new Date().toISOString();
+      await writable.write(`[${stamp}] ${message}\n`);
+      await writable.close();
+    }catch(e){
+      console.warn('Logdatei konnte nicht geschrieben werden', e);
     }
   }
 
@@ -3203,6 +3300,16 @@ blockTableEl.addEventListener('click', (ev) => {
   if (saveCacheBtn) saveCacheBtn.addEventListener('click', saveToCacheFile);
   if (loadCacheBtn) loadCacheBtn.addEventListener('click', loadFromCacheFile);
   if (disconnectCacheBtn) disconnectCacheBtn.addEventListener('click', disconnectCacheFile);
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      saveToCacheFile();
+    }
+  });
+
+  window.addEventListener('beforeunload', () => {
+    saveToCacheFile();
+  });
 
   ensureCacheHandleLoaded();
 
