@@ -514,7 +514,7 @@ function normalizeEmployee(emp){
       }
 
       // Normalize settings
-      state.settings.attempts = clamp(Math.round(Number(state.settings.attempts || 10000)), 10, 100000);
+      state.settings.attempts = clamp(Math.round(Number(state.settings.attempts || 10000)), 10, 10000000);
       state.settings.preferGaps = Boolean(state.settings.preferGaps);
 
       return state;
@@ -627,7 +627,7 @@ function normalizeEmployee(emp){
     }
 
     // Normalize settings
-    state.settings.attempts = clamp(Math.round(Number(state.settings.attempts || 10000)), 10, 100000);
+    state.settings.attempts = clamp(Math.round(Number(state.settings.attempts || 10000)), 10, 10000000);
     state.settings.preferGaps = Boolean(state.settings.preferGaps);
 
     ensureMonthStructures(state.month);
@@ -947,10 +947,9 @@ function normalizeEmployee(emp){
   function deltaBadgeHtml(delta){
     // Kleine Visualisierung für +/- Abweichung (zum Ziel inkl. Konto)
     const d = round1(Number(delta || 0));
-    const abs = Math.abs(d);
     let cls = 'ok';
-    if (abs <= 0.5) cls = 'ok';
-    else if (abs <= 5) cls = 'warn';
+    if (d >= -10 && d <= 4) cls = 'ok';
+    else if (d >= -20 && d <= 12) cls = 'warn';
     else cls = 'danger';
     const sign = d > 0 ? '+' : '';
     return `<span class="badge ${cls}">${sign}${d}h</span>`;
@@ -1209,12 +1208,21 @@ function renderEmployeeList(){
     if (iwdEmp === empId) return `<span class="badge iwd">IWD</span>`;
     if (tdEmp === empId) return `<span class="badge td">TD</span>`;
 
-    // forced off (day after IWD)
-    if (res.forcedOff && res.forcedOff[empId] && res.forcedOff[empId][dayIdx]){
-      return `<span class="badge off">/</span>`;
+    const blk = getBlock(monthKey, empId, day.iso);
+    const forced = res.forcedOff && res.forcedOff[empId] && res.forcedOff[empId][dayIdx];
+    if (forced){
+      const badges = [`<span class="badge off">/</span>`];
+      if (blk === BLOCK.FREE0) badges.push(`<span class="badge free0">Frei</span>`);
+      if (blk === BLOCK.WF) badges.push(`<span class="badge wf">WF</span>`);
+      if (blk === BLOCK.FREEH){
+        const emp = res.empById[empId];
+        const credit = (emp && isWeekday(day.date)) ? round1(emp.weeklyHours / 5) : 0;
+        const extra = (credit > 0) ? ` +${credit}h` : '';
+        badges.push(`<span class="badge freeh">Urlaub${extra}</span>`);
+      }
+      return badges.join(' ');
     }
 
-    const blk = getBlock(monthKey, empId, day.iso);
     if (blk === BLOCK.FREE0) return `<span class="badge free0">Frei</span>`;
     if (blk === BLOCK.WF) return `<span class="badge wf">WF</span>`;
     if (blk === BLOCK.FREEH){
@@ -1486,7 +1494,9 @@ function renderEmployeeList(){
     if (!ed) return false;
     if (forcedOff && forcedOff[empId] && forcedOff[empId][dayIdx]) return false;
 
-    if (!blockStageAllows(ed.blockByDay[dayIdx], blockStage)) return false;
+    const blk = ed.blockByDay[dayIdx];
+    if (shift && shift.key === SHIFT.IWD.key && blk === BLOCK.WF) return false;
+    if (!blockStageAllows(blk, blockStage)) return false;
     return true;
   }
 
@@ -1604,10 +1614,12 @@ function renderEmployeeList(){
       score += Math.max(0, tCount - iCount) * 20;
     }
 
-    // Bonus, wenn der obligatorische Folgetag ohnehin frei/blockiert ist
+    // Folgetag nach IWD: keine "Frei"-Logik, sondern WF/Urlaub vermeiden
     if (dayIdx + 1 < ctx.N){
-      if (ed.blockByDay[dayIdx + 1] !== BLOCK.NONE) score += 60;
-      if (!ed.allowedByDay[dayIdx + 1]) score += 60;
+      const nextBlock = ed.blockByDay[dayIdx + 1];
+      if (nextBlock === BLOCK.FREEH) score -= 800;
+      else if (nextBlock === BLOCK.WF) score -= 500;
+      else if (nextBlock === BLOCK.FREE0) score -= 120;
     }
 
     // Vermeide starke Überplanung
@@ -1883,6 +1895,9 @@ function renderEmployeeList(){
 
       WISH_DAY: 8_000,
       WISH_SHIFT: 12_000,
+      FORCED_URLAUB: 15_000_000,
+      FORCED_WF: 2_000_000,
+      FORCED_FREE0: 600_000,
     };
 
     // IWD jeden Tag
@@ -1918,6 +1933,19 @@ function renderEmployeeList(){
 
       checkOne(iwdEmpId, SHIFT.IWD);
       checkOne(tdEmpId, SHIFT.TD);
+    }
+
+    // /-Tag darf kein Urlaub/WF sein (Frei nur im Notfall)
+    for (const emp of ctx.employees){
+      const ed = ctx.empDataById[emp.id];
+      if (!ed) continue;
+      for (let i = 0; i < N; i++){
+        if (!forcedOff[emp.id] || !forcedOff[emp.id][i]) continue;
+        const blk = ed.blockByDay[i];
+        if (blk === BLOCK.FREEH) cost += COST.FORCED_URLAUB;
+        else if (blk === BLOCK.WF) cost += COST.FORCED_WF;
+        else if (blk === BLOCK.FREE0) cost += COST.FORCED_FREE0;
+      }
     }
 
     // --- Wochenstunden (Segmentweise) ---
@@ -1999,9 +2027,14 @@ function renderEmployeeList(){
       maxDelta = Math.max(maxDelta, delta);
       minDelta = Math.min(minDelta, delta);
 
-      cost += (delta * delta) * 50;
-      cost += Math.abs(delta) * 200;
-      if (delta > 0) cost += delta * 50; // Überstunden teurer
+      if (delta >= -10 && delta <= 4){
+        cost += Math.abs(delta) * 5;
+      } else if (delta >= -20 && delta <= 12){
+        cost += Math.abs(delta) * 80;
+      } else {
+        cost += Math.abs(delta) * 260;
+        if (delta > 0) cost += delta * 120;
+      }
 
       // Month limits
       const p = ed.prefs;
@@ -2568,12 +2601,14 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
       maxDelta = Math.max(maxDelta, delta);
       minDelta = Math.min(minDelta, delta);
 
-      // Stark: große Abweichungen sollen vermieden werden
-      cost += (delta * delta) * 50;
-      cost += Math.abs(delta) * 200;
-
-      // Überstunden etwas teurer
-      if (delta > 0) cost += delta * 50;
+      if (delta >= -10 && delta <= 4){
+        cost += Math.abs(delta) * 5;
+      } else if (delta >= -20 && delta <= 12){
+        cost += Math.abs(delta) * 80;
+      } else {
+        cost += Math.abs(delta) * 260;
+        if (delta > 0) cost += delta * 120;
+      }
     }
 
     if (employees.length >= 2){
@@ -2689,7 +2724,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
     const segments = buildWeekSegments(days);
 
     const settings = {
-      attempts: clamp(Number(state.settings.attempts || 10000), 10, 100000),
+      attempts: clamp(Number(state.settings.attempts || 10000), 10, 10000000),
       preferGaps: Boolean(state.settings.preferGaps),
     };
 
@@ -2860,7 +2895,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
   });
 
   attemptsInputEl.addEventListener('change', () => {
-    state.settings.attempts = clamp(Math.round(Number(attemptsInputEl.value || 10000)), 10, 100000);
+    state.settings.attempts = clamp(Math.round(Number(attemptsInputEl.value || 10000)), 10, 10000000);
     attemptsInputEl.value = state.settings.attempts;
     saveState();
   });
@@ -3042,7 +3077,7 @@ blockTableEl.addEventListener('click', (ev) => {
       return;
     }
 
-    const totalAttempts = clamp(Math.round(Number(state.settings.attempts || 10000)), 10, 100000);
+    const totalAttempts = clamp(Math.round(Number(state.settings.attempts || 10000)), 10, 10000000);
 
     try{
       generateBtn.disabled = true;
@@ -3132,7 +3167,7 @@ blockTableEl.addEventListener('click', (ev) => {
         state.month = base.month;
       }
 
-      state.settings.attempts = clamp(Math.round(Number(state.settings.attempts || 10000)), 10, 100000);
+      state.settings.attempts = clamp(Math.round(Number(state.settings.attempts || 10000)), 10, 10000000);
       state.settings.preferGaps = Boolean(state.settings.preferGaps);
 
       ensureMonthStructures(state.month);
