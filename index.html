@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dienstplan Generator (Offline, Monat)</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script defer src="app.js"></script>
+</head>
+
+<body>
+  <header class="app-header">
+    <div class="wrap">
+      <h1>Dienstplan Generator (Monat · Offline)</h1>
+      <p class="subtitle">
+        Funktioniert komplett im Browser – ohne Installation. Daten bleiben lokal (LocalStorage) oder optional in einer Cache-Datei.
+      </p>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="page-grid">
+      <!-- Sidebar -->
+      <div class="sidebar">
+        <section class="card" id="blockCard">
+          <h2>Monat & Einstellungen</h2>
+
+          <div class="grid-2">
+            <label class="field">
+              <span>Monat</span>
+              <input id="monthSelect" type="month" />
+            </label>
+
+            <label class="field">
+              <span>Qualität (Versuche)</span>
+              <input id="attemptsInput" type="number" min="10" max="100000" step="500" />
+            </label>
+          </div>
+
+          <label class="checkbox">
+            <input type="checkbox" id="preferGaps" />
+            <span>Freitage bevorzugen (große Abstände)</span>
+          </label>
+
+          <div class="actions">
+            <button class="btn primary" id="generateBtn" type="button">Dienstplan generieren</button>
+            <button class="btn" id="clearBtn" type="button">Ausgabe leeren</button>
+            <button class="btn" id="printBtn" type="button" title="Druckt den generierten Dienstplan" disabled>Drucken</button>
+          </div>
+
+          <div id="progressWrap" class="progress-wrap hidden" aria-live="polite">
+            <div class="progress-head">
+              <div id="progressText" class="progress-text">Berechnung…</div>
+              <div id="progressPct" class="progress-pct">0%</div>
+            </div>
+            <div class="progress-bar">
+              <div id="progressBar" class="progress-fill" style="width:0%"></div>
+            </div>
+          </div>
+
+          <div class="prio-panel" aria-label="Prioritäten bei Konflikten">
+            <div class="prio-title">Prioritäten bei Konflikten</div>
+            <ol start="0">
+              <li><strong>IWD</strong> muss immer belegt sein. <strong>TD</strong> so viele wie möglich (wenn reduzieren: zuerst am Wochenende, dann unter der Woche).</li>
+              <li><strong>Urlaub</strong> (gesperrt + Mo–Fr zählt als Stunden-Gutschrift).</li>
+              <li><strong>WF</strong> (Wunschfrei, max. 3× pro Person/Monat).</li>
+              <li><strong>Frei</strong> ohne Stunden (gesperrt; fehlende Stunden werden in derselben Woche verteilt).</li>
+              <li><strong>Überstunden</strong> / Stundenkonto (≈ 1/12 pro Monat abbauen; max. ±20h/Monat extra gegenüber Vertrag).</li>
+              <li><strong>Sonderwünsche</strong> (werden berücksichtigt, aber nachrangig).</li>
+            </ol>
+          </div>
+
+
+          <p class="hint">
+            Regeln: Pro Tag genau 1× <strong>IWD</strong> (20h). <strong>TD</strong> (10h) wird je Woche so eingeplant,
+            dass die Wochenstunden möglichst passen. Nach einem IWD ist der Folgetag für diese Person immer frei (<strong>/</strong>).
+          </p>
+          <p class="hint">
+            Blockliste: <strong>Urlaub</strong> sperrt den Tag und rechnet Mo–Fr automatisch als Stunden-Gutschrift
+            (40h→8h, 30h→6h, 20h→4h pro Wochentag). <strong>WF</strong> ist priorisiertes Wunschfrei (max. 3×/Monat).
+            <strong>Frei</strong> sperrt den Tag ohne Stunden-Gutschrift (Stunden werden in der Woche verteilt).
+            Zusätzlich: <strong>TD Pflicht</strong> (in der Blockliste) markiert Termine/Begleitungen, an denen nach Möglichkeit immer ein TD geplant wird.
+            Sonntage & Berliner Feiertage werden automatisch hervorgehoben.
+          </p>
+        </section>
+
+        <section class="card" id="planCard">
+          <h2>Mitarbeiter</h2>
+
+          <div class="grid-3">
+            <label class="field">
+              <span>Name</span>
+              <input id="newEmpName" type="text" placeholder="z.B. Max" />
+            </label>
+
+            <label class="field">
+              <span>Wochenstunden</span>
+              <select id="newEmpHours">
+                <option value="20">20h</option>
+                <option value="30">30h</option>
+                <option value="40" selected>40h</option>
+              </select>
+            </label>
+
+            <button class="btn" id="addEmpBtn" type="button">Hinzufügen</button>
+          </div>
+
+          <div id="employeeList" class="employee-list"></div>
+
+          <p class="hint">
+            Tipp: Erst Mitarbeiter anlegen, dann Blockliste pflegen, dann generieren.
+          </p>
+        </section>
+
+        <section class="card" id="hoursCard">
+          <h2>Export / Import</h2>
+
+          <div class="actions">
+            <button class="btn" id="exportBtn" type="button">Export (JSON)</button>
+
+            <label class="btn">
+              Import (JSON)
+              <input id="importFile" type="file" accept="application/json" hidden />
+            </label>
+          </div>
+
+          <p class="hint">
+            Export/Import ist optional (praktisch für Backup oder Wechsel des PCs).
+          </p>
+        </section>
+
+        <section class="card" id="cacheCard">
+          <h2>Zwischenspeicher-Datei (optional)</h2>
+
+          <p class="hint">
+            Standardmäßig bleiben alle Daten lokal im Browser gespeichert (LocalStorage). Falls du die ZIP-Version
+            aktualisierst oder den Ordner wechselst, kannst du hier eine <strong>Projektdatei</strong> im selben Ordner
+            verbinden – dann wird automatisch mitgespeichert (Browser-Unterstützung vorausgesetzt).
+          </p>
+
+          <div id="cacheSupport" class="hint"></div>
+
+          <div class="actions wrap-actions">
+            <button class="btn" id="connectCacheBtn" type="button">Cache-Datei verbinden</button>
+            <button class="btn" id="loadCacheBtn" type="button">Aus Datei laden</button>
+            <button class="btn" id="saveCacheBtn" type="button">In Datei speichern</button>
+            <button class="btn danger" id="disconnectCacheBtn" type="button">Trennen</button>
+          </div>
+
+          <div id="cacheStatus" class="hint"></div>
+        </section>
+
+      </div>
+
+      <!-- Main content -->
+      <div class="main">
+        <section class="card" id="blocklistMainCard">
+          <div class="card-head">
+            <h2>Blockliste (Monat)</h2>
+            <div class="legend">
+              <span class="badge freeh">Urlaub</span>
+              <span class="badge wf">WF</span>
+              <span class="badge free0">Frei</span>
+              <span class="badge tdreq">TD Pflicht</span>
+              <span class="badge off">/ (Tag nach IWD)</span>
+              <span class="badge iwd">IWD</span>
+              <span class="badge td">TD</span>
+            </div>
+          </div>
+
+          <div class="table-scroll">
+            <table class="table" id="blockTable"></table>
+          </div>
+        </section>
+
+        <section class="card" id="planSection">
+          <h2 class="screen-only">Dienstplan</h2>
+          <div id="messages"></div>
+
+          <div class="table-scroll">
+            <table class="table" id="planTable"></table>
+          </div>
+        </section>
+
+        <section class="card" id="hoursSection">
+          <h2>Stundenübersicht</h2>
+          <div class="table-scroll">
+            <table class="table" id="hoursTable"></table>
+          </div>
+        </section>
+
+        <footer class="footer">
+          <small>
+            Version 4.3 – Offline-Dienstplan (HTML/CSS/JS). Keine externen Abhängigkeiten.
+          </small>
+        </footer>
+      </div>
+    </div>
+  </main>
+</body>
+</html>
