@@ -782,6 +782,7 @@
       updateCacheUi();
     }catch(e){
       // User cancelled => ignore
+      if (e && e.name === 'AbortError') return;
       console.warn('Cache-Datei verbinden abgebrochen/fehlgeschlagen', e);
       setCacheError('Cache-Datei verbinden fehlgeschlagen');
       updateCacheUi();
