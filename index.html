@@ -134,20 +134,21 @@
 
           <p class="hint">
             Standardmäßig bleiben alle Daten lokal im Browser gespeichert (LocalStorage). Falls du die ZIP-Version
-            aktualisierst oder den Ordner wechselst, kannst du hier eine <strong>Projektdatei</strong> im selben Ordner
-            verbinden – dann wird automatisch mitgespeichert (Browser-Unterstützung vorausgesetzt).
+            aktualisierst oder den Ordner wechselst, kannst du hier einen <strong>Projektordner</strong> verbinden.
+            Wähle dabei bitte den Ordner, in dem diese App liegt – dort werden <strong>dienstplan_cache.json</strong>
+            und eine <strong>dienstplan_cache.log</strong> automatisch erstellt (Browser-Unterstützung vorausgesetzt).
           </p>
 
           <div id="cacheSupport" class="hint"></div>
 
           <div class="actions wrap-actions">
-            <button class="btn" id="connectCacheBtn" type="button">Cache-Datei verbinden</button>
+            <button class="btn" id="connectCacheBtn" type="button">Cache-Ordner auswählen</button>
             <button class="btn" id="loadCacheBtn" type="button">Aus Datei laden</button>
             <button class="btn" id="saveCacheBtn" type="button">In Datei speichern</button>
             <button class="btn danger" id="disconnectCacheBtn" type="button">Trennen</button>
           </div>
 
-          <div id="cacheStatus" class="hint"></div>
+          <div id="cacheStatus" class="hint" aria-live="polite"></div>
         </section>
 
       </div>
@@ -175,7 +176,7 @@
 
         <section class="card" id="planSection">
           <h2 class="screen-only">Dienstplan</h2>
-          <div id="messages"></div>
+          <div id="messages" aria-live="polite"></div>
 
           <div class="table-scroll">
             <table class="table" id="planTable"></table>
