@@ -531,7 +531,7 @@ function normalizeEmployee(emp){
       }
 
       // Normalize settings
-      state.settings.attempts = clamp(Math.round(Number(state.settings.attempts || 10000)), 10, 10000000);
+      state.settings.attempts = clamp(Math.round(Number(state.settings.attempts || 10000)), 10, 1000000);
       state.settings.preferGaps = Boolean(state.settings.preferGaps);
 
       return state;
@@ -650,7 +650,7 @@ function normalizeEmployee(emp){
     }
 
     // Normalize settings
-    state.settings.attempts = clamp(Math.round(Number(state.settings.attempts || 10000)), 10, 10000000);
+    state.settings.attempts = clamp(Math.round(Number(state.settings.attempts || 10000)), 10, 1000000);
     state.settings.preferGaps = Boolean(state.settings.preferGaps);
 
     ensureMonthStructures(state.month);
@@ -958,6 +958,7 @@ function normalizeEmployee(emp){
   const printHeaderEl = $('#printHeader');
   const planTableEl = $('#planTable');
   const hoursTableEl = $('#hoursTable');
+  const printHoursNotesEl = $('#printHoursNotes');
 
   // ---------- Progress helpers ----------
   function setProgressVisible(visible){
@@ -1247,6 +1248,7 @@ function renderEmployeeList(){
       planTableEl.innerHTML = '';
       hoursTableEl.innerHTML = '';
       if (printHeaderEl) printHeaderEl.innerHTML = '';
+      if (printHoursNotesEl) printHoursNotesEl.innerHTML = '';
       if (printBtn) printBtn.disabled = true;
       return;
     }
@@ -1263,6 +1265,7 @@ function renderEmployeeList(){
 
     planTableEl.innerHTML = renderPlanTable(res);
     hoursTableEl.innerHTML = renderHoursTable(res);
+    renderPrintNotes(res);
 
     if (printBtn) printBtn.disabled = false;
 
@@ -1444,6 +1447,70 @@ function renderEmployeeList(){
     `;
 
     return `${thead}<tbody>${rows}</tbody>${foot}`;
+  }
+
+  function renderPrintNotes(res){
+    if (!printHoursNotesEl) return;
+    if (!res){
+      printHoursNotesEl.innerHTML = '';
+      return;
+    }
+
+    const notes = [];
+    const messages = Array.isArray(res.messages) ? res.messages : [];
+    const overtimeWarns = messages.filter(m => m.type === 'warn' && /zu wenig Soll-Stunden/i.test(m.title || ''));
+    for (const warn of overtimeWarns){
+      notes.push({
+        type: 'warn',
+        title: warn.title || 'Hinweis',
+        details: warn.details || '',
+      });
+    }
+
+    const missingIwdDays = res.days
+      .filter((day, idx) => !res.schedule.iwd[idx])
+      .map(day => day.label);
+    if (missingIwdDays.length){
+      notes.push({
+        type: 'danger',
+        title: 'IWD nicht möglich',
+        details: missingIwdDays.join(', '),
+      });
+    }
+
+    const plannedTdDays = Array.isArray(res.plannedTdDays) ? res.plannedTdDays : [];
+    const savedTdDays = plannedTdDays
+      .filter(idx => !res.schedule.td[idx])
+      .sort((a,b) => a - b)
+      .map(idx => res.days[idx]?.label)
+      .filter(Boolean);
+    if (savedTdDays.length){
+      notes.push({
+        type: 'warn',
+        title: 'Gesparte TD2',
+        details: savedTdDays.join(', '),
+      });
+    }
+
+    if (notes.length === 0){
+      printHoursNotesEl.innerHTML = '';
+      return;
+    }
+
+    const items = notes.map(note => {
+      const cls = note.type === 'danger' ? 'danger' : 'warn';
+      return `
+        <li class="print-note ${cls}">
+          <strong>${escapeHtml(note.title)}</strong>
+          <div>${escapeHtml(note.details)}</div>
+        </li>
+      `.trim();
+    }).join('');
+
+    printHoursNotesEl.innerHTML = `
+      <h3>Druck-Hinweise</h3>
+      <ul class="print-note-list">${items}</ul>
+    `.trim();
   }
 
   // ---------- Scheduling Logic ----------
@@ -1846,6 +1913,7 @@ function renderEmployeeList(){
   function buildScheduleAttemptCtx(ctx){
     const N = ctx.N;
     const schedule = { iwd: Array(N).fill(null), td: Array(N).fill(null) };
+    const plannedTdDays = [];
 
     const forcedOff = {};
     const lastWork = {};
@@ -1884,6 +1952,7 @@ function renderEmployeeList(){
       const autoTdCount = chooseTdCount(totalRequired, baseIwd, segIndices.length);
       const tdCount = clamp(Math.max(autoTdCount, requiredTdCount), 0, segIndices.length);
       const tdDays = chooseTdDaysCtx(ctx, segIndices, forcedOff, tdCount, ctx.tdRequiredByDay);
+      plannedTdDays.push(...tdDays);
 
       // Wochenzählung für Limits
       const weekCounts = { iwd: {}, td: {} };
@@ -1952,7 +2021,7 @@ function renderEmployeeList(){
       }
     }
 
-    return { schedule, forcedOff };
+    return { schedule, forcedOff, plannedTdDays };
   }
 
   function evaluateAttemptCtx(ctx, attempt){
@@ -2069,7 +2138,7 @@ function renderEmployeeList(){
         const total = work + credit;
         const delta = total - target;
 
-        cost += Math.abs(delta) * 110 + (delta > 0 ? delta * 20 : 0);
+        cost += Math.abs(delta) * 120 + (delta > 0 ? delta * 60 : 0);
 
         // Week limits
         const p = ed.prefs;
@@ -2114,12 +2183,18 @@ function renderEmployeeList(){
       minDelta = Math.min(minDelta, delta);
 
       if (delta >= -10 && delta <= 4){
-        cost += Math.abs(delta) * 5;
+        cost += Math.abs(delta) * 8;
+        if (delta > 0) cost += delta * 12;
       } else if (delta >= -20 && delta <= 12){
-        cost += Math.abs(delta) * 80;
+        cost += Math.abs(delta) * 120;
+        if (delta > 0) cost += delta * 50;
       } else {
-        cost += Math.abs(delta) * 260;
-        if (delta > 0) cost += delta * 120;
+        cost += Math.abs(delta) * 320;
+        if (delta > 0) cost += delta * 200;
+      }
+
+      if (delta > 20){
+        cost += (delta - 20) * 2000;
       }
 
       // Month limits
@@ -2276,8 +2351,8 @@ function renderEmployeeList(){
         bestDiff = diff;
         best = c;
       } else if (diff === bestDiff){
-        // tie-break: prefer MORE TD (im besten Fall)
-        if (c > best) best = c;
+        // tie-break: prefer FEWER TD (weniger Überstunden)
+        if (c < best) best = c;
       }
     }
     return best;
@@ -2668,7 +2743,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
         const delta = total - target;
 
         // Ziel: nah an 0. Überstunden etwas teurer als Minus, weil Meetings/Supervision nicht geplant.
-        cost += Math.abs(delta) * 110 + (delta > 0 ? delta * 20 : 0);
+        cost += Math.abs(delta) * 120 + (delta > 0 ? delta * 60 : 0);
       }
     }
 
@@ -2688,12 +2763,18 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
       minDelta = Math.min(minDelta, delta);
 
       if (delta >= -10 && delta <= 4){
-        cost += Math.abs(delta) * 5;
+        cost += Math.abs(delta) * 8;
+        if (delta > 0) cost += delta * 12;
       } else if (delta >= -20 && delta <= 12){
-        cost += Math.abs(delta) * 80;
+        cost += Math.abs(delta) * 120;
+        if (delta > 0) cost += delta * 50;
       } else {
-        cost += Math.abs(delta) * 260;
-        if (delta > 0) cost += delta * 120;
+        cost += Math.abs(delta) * 320;
+        if (delta > 0) cost += delta * 200;
+      }
+
+      if (delta > 20){
+        cost += (delta - 20) * 2000;
       }
     }
 
@@ -2810,7 +2891,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
     const segments = buildWeekSegments(days);
 
     const settings = {
-      attempts: clamp(Number(state.settings.attempts || 10000), 10, 10000000),
+      attempts: clamp(Number(state.settings.attempts || 10000), 10, 1000000),
       preferGaps: Boolean(state.settings.preferGaps),
     };
 
@@ -2827,6 +2908,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
         segments,
         schedule: { iwd: Array(days.length).fill(null), td: Array(days.length).fill(null) },
         forcedOff: {},
+        plannedTdDays: [],
         monthSummaryByEmpId: {},
         messages: [{ type: 'danger', title: 'Fehler', details: 'Bitte zuerst Mitarbeiter hinzufügen.' }],
       };
@@ -2905,6 +2987,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
         segments,
         schedule: { iwd: Array(days.length).fill(null), td: Array(days.length).fill(null) },
         forcedOff: {},
+        plannedTdDays: [],
         monthSummaryByEmpId: {},
         messages: [{ type: 'danger', title: 'Fehler', details: 'Konnte keinen Plan erstellen. Bitte Eingaben prüfen.' }],
       };
@@ -2945,6 +3028,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
       empById: monthSummary.empById,
       schedule: bestAttempt.schedule,
       forcedOff: bestAttempt.forcedOff,
+      plannedTdDays: bestAttempt.plannedTdDays || [],
       monthSummaryByEmpId: monthSummary.summaryByEmpId,
       messages: dedupeMessages(messages),
       generatedAt: new Date().toISOString(),
@@ -2981,7 +3065,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
   });
 
   attemptsInputEl.addEventListener('change', () => {
-    state.settings.attempts = clamp(Math.round(Number(attemptsInputEl.value || 10000)), 10, 10000000);
+    state.settings.attempts = clamp(Math.round(Number(attemptsInputEl.value || 10000)), 10, 1000000);
     attemptsInputEl.value = state.settings.attempts;
     saveState();
   });
@@ -3163,7 +3247,7 @@ blockTableEl.addEventListener('click', (ev) => {
       return;
     }
 
-    const totalAttempts = clamp(Math.round(Number(state.settings.attempts || 10000)), 10, 10000000);
+    const totalAttempts = clamp(Math.round(Number(state.settings.attempts || 10000)), 10, 1000000);
 
     try{
       generateBtn.disabled = true;
@@ -3254,7 +3338,7 @@ blockTableEl.addEventListener('click', (ev) => {
         state.month = base.month;
       }
 
-      state.settings.attempts = clamp(Math.round(Number(state.settings.attempts || 10000)), 10, 10000000);
+      state.settings.attempts = clamp(Math.round(Number(state.settings.attempts || 10000)), 10, 1000000);
       state.settings.preferGaps = Boolean(state.settings.preferGaps);
 
       ensureMonthStructures(state.month);
