@@ -3239,7 +3239,13 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
       parsedEl.innerHTML = `<strong>Erkannt:</strong> ${escapeHtml(describePrefs(emp.prefs))}`;
     }
 
+    // Änderung an Mitarbeiterdaten => Ergebnisse verwerfen (sicher)
+    for (const mk of Object.keys(state.lastResultByMonth)){
+      state.lastResultByMonth[mk] = null;
+    }
+
     saveState();
+    renderOutput();
   });
 
   // Name / Wochenstunden committen (Change = meistens Blur/Enter)
