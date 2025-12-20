@@ -378,6 +378,14 @@ code{
   /* Hours table: also compact in print */
   #hoursTable{ table-layout: fixed !important; width: 100% !important; }
   #hoursTable th, #hoursTable td{ padding: 2px 3px !important; font-size: 8px !important; line-height: 1.15 !important; }
+
+  /* Print notes below hours overview */
+  .print-notes{ margin-top: 6px; }
+  .print-notes h3{ margin: 6px 0 4px 0; font-size: 10px; }
+  .print-note-list{ margin: 0; padding-left: 16px; }
+  .print-note{ margin: 4px 0; font-size: 8px; line-height: 1.2; padding: 3px 6px; border: 1px solid rgba(0,0,0,.35); border-radius: 6px; }
+  .print-note.warn{ background: #fff2cc; color: #6b4300; border-color: rgba(138,90,0,.45); }
+  .print-note.danger{ background: #f8d7da; color: #7b0000; border-color: rgba(155,0,0,.45); }
 }
 
 /* Print-only blocks */
