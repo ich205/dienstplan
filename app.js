@@ -1703,7 +1703,6 @@ function renderEmployeeList(){
     if (forcedOff && forcedOff[empId] && forcedOff[empId][dayIdx]) return false;
 
     const blk = ed.blockByDay[dayIdx];
-    if (shift && shift.key === SHIFT.IWD.key && blk === BLOCK.WF) return false;
     if (!blockStageAllows(blk, blockStage)) return false;
     return true;
   }
