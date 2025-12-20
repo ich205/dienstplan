@@ -8,7 +8,6 @@
   --danger: #ff6b6b;
   --ok: #49d17c;
   --warn: #ffd166;
-  --date-col-width: 170px;
 }
 
 *{ box-sizing: border-box; }
@@ -446,7 +445,6 @@ code{
   left: 0;
   background: rgba(18,26,38,.98);
   z-index: 2;
-  width: var(--date-col-width);
 }
 
 .table thead .sticky-col{
@@ -456,7 +454,7 @@ code{
 /* zweite Sticky-Spalte (TD Pflicht) */
 .table .sticky-col2{
   position: sticky;
-  left: var(--date-col-width); /* sollte zur Datum-Spaltenbreite passen */
+  left: 170px; /* sollte zur Datum-Spaltenbreite passen */
   background: rgba(18,26,38,.98);
   z-index: 2;
 }
