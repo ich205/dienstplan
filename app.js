@@ -214,6 +214,18 @@
     return Math.round(n * 10) / 10;
   }
 
+  function isPlainObject(value){
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  function safeRecord(value){
+    return isPlainObject(value) ? value : {};
+  }
+
+  function safeSettings(value, baseSettings){
+    return { ...baseSettings, ...(isPlainObject(value) ? value : {}) };
+  }
+
   function defaultState(){
     const month = monthKeyFromDate(new Date());
     return {
@@ -501,11 +513,11 @@ function normalizeEmployee(emp){
       const state = {
         ...base,
         ...parsed,
-        settings: { ...base.settings, ...(parsed.settings || {}) },
+        settings: safeSettings(parsed.settings, base.settings),
         employees: Array.isArray(parsed.employees) ? parsed.employees.map(normalizeEmployee) : [],
-        blocksByMonth: typeof parsed.blocksByMonth === 'object' && parsed.blocksByMonth ? parsed.blocksByMonth : {},
-        tdRequiredByMonth: (parsed && typeof parsed.tdRequiredByMonth === 'object' && parsed.tdRequiredByMonth) ? parsed.tdRequiredByMonth : {},
-        lastResultByMonth: typeof parsed.lastResultByMonth === 'object' && parsed.lastResultByMonth ? parsed.lastResultByMonth : {},
+        blocksByMonth: safeRecord(parsed.blocksByMonth),
+        tdRequiredByMonth: safeRecord(parsed.tdRequiredByMonth),
+        lastResultByMonth: safeRecord(parsed.lastResultByMonth),
       };
 
       // Normalize month
@@ -614,10 +626,10 @@ function normalizeEmployee(emp){
     state = {
       ...base,
       ...obj,
-      settings: { ...base.settings, ...(obj.settings || {}) },
+      settings: safeSettings(obj && obj.settings, base.settings),
       employees: Array.isArray(obj.employees) ? obj.employees.map(normalizeEmployee) : [],
-      blocksByMonth: (obj && typeof obj.blocksByMonth === 'object' && obj.blocksByMonth) ? obj.blocksByMonth : {},
-      tdRequiredByMonth: (obj && typeof obj.tdRequiredByMonth === 'object' && obj.tdRequiredByMonth) ? obj.tdRequiredByMonth : {},
+      blocksByMonth: safeRecord(obj && obj.blocksByMonth),
+      tdRequiredByMonth: safeRecord(obj && obj.tdRequiredByMonth),
       lastResultByMonth: {}, // immer leer, neu generieren
     };
 
@@ -637,7 +649,7 @@ function normalizeEmployee(emp){
   }
 
   function cacheApiSupported(){
-    return !!(window.showOpenFilePicker && window.showSaveFilePicker && window.FileSystemFileHandle);
+    return !!(window.showOpenFilePicker && window.showSaveFilePicker && window.FileSystemFileHandle && window.indexedDB);
   }
 
   function setCacheStatus(msg){
@@ -3157,10 +3169,11 @@ blockTableEl.addEventListener('click', (ev) => {
       state = {
         ...base,
         ...obj,
-        settings: { ...base.settings, ...(obj.settings || {}) },
+        settings: safeSettings(obj.settings, base.settings),
         employees: obj.employees.map(normalizeEmployee),
-        blocksByMonth: obj.blocksByMonth || {},
-        lastResultByMonth: obj.lastResultByMonth || {},
+        blocksByMonth: safeRecord(obj.blocksByMonth),
+        tdRequiredByMonth: safeRecord(obj.tdRequiredByMonth),
+        lastResultByMonth: safeRecord(obj.lastResultByMonth),
       };
 
       if (typeof state.month !== 'string' || !/^\d{4}-\d{2}$/.test(state.month)){
