@@ -1490,6 +1490,20 @@ function renderEmployeeList(){
       });
     }
 
+    const omittedTdDays = Array.isArray(res.omittedTdDays) ? res.omittedTdDays : [];
+    const omittedTdLabels = omittedTdDays
+      .filter(idx => !plannedTdDays.includes(idx))
+      .sort((a,b) => a - b)
+      .map(idx => res.days[idx]?.label)
+      .filter(Boolean);
+    if (omittedTdLabels.length){
+      notes.push({
+        type: 'warn',
+        title: 'TD nicht geplant (zu wenig Stunden)',
+        details: omittedTdLabels.join(', '),
+      });
+    }
+
     return notes;
   }
 
@@ -1689,8 +1703,7 @@ function renderEmployeeList(){
     return count;
   }
 
-  function chooseTdDaysCtx(ctx, segmentIndices, forcedOff, tdCount, tdRequiredByDay){
-    if (tdCount <= 0) return [];
+  function selectTdDaysWithOmissionsCtx(ctx, segmentIndices, forcedOff, tdCount, tdRequiredByDay){
     const days = ctx.days;
 
     // Pflicht-TD Tage: immer dabei
@@ -1718,14 +1731,17 @@ function renderEmployeeList(){
       return a.idx - b.idx;
     });
 
-    const picked = required.slice();
-    const need = Math.max(0, tdCount - picked.length);
-    for (let i = 0; i < Math.min(need, candidates.length); i++){
-      picked.push(candidates[i].idx);
-    }
+    const ordered = required.concat(candidates.map(c => c.idx));
+    const pickCount = Math.max(0, Math.min(tdCount, ordered.length));
+    const planned = ordered.slice(0, pickCount).sort((a,b) => a - b);
+    const omitted = ordered.slice(pickCount).sort((a,b) => a - b);
 
-    picked.sort((a,b) => a - b);
-    return picked;
+    return { planned, omitted };
+  }
+
+  function chooseTdDaysCtx(ctx, segmentIndices, forcedOff, tdCount, tdRequiredByDay){
+    if (tdCount <= 0 && (!segmentIndices || segmentIndices.length === 0)) return [];
+    return selectTdDaysWithOmissionsCtx(ctx, segmentIndices, forcedOff, tdCount, tdRequiredByDay).planned;
   }
 
   function scoreIwdCtx(ctx, empId, dayIdx, remainingWeek, remainingMonth, counts, weekCounts, lastWork, lastIwd){
@@ -1941,6 +1957,7 @@ function renderEmployeeList(){
     const N = ctx.N;
     const schedule = { iwd: Array(N).fill(null), td: Array(N).fill(null) };
     const plannedTdDays = [];
+    const omittedTdDays = [];
 
     const forcedOff = {};
     const lastWork = {};
@@ -1987,8 +2004,15 @@ function renderEmployeeList(){
       const requiredTdCount = segIndices.reduce((n, idx) => n + (ctx.tdRequiredByDay[idx] ? 1 : 0), 0);
       const autoTdCount = chooseTdCount(segmentTargetTotal, baseIwd, segIndices.length);
       const tdCount = clamp(Math.max(autoTdCount, requiredTdCount), 0, segIndices.length);
-      const tdDays = chooseTdDaysCtx(ctx, segIndices, forcedOff, tdCount, ctx.tdRequiredByDay);
+      const { planned: tdDays, omitted: omittedDays } = selectTdDaysWithOmissionsCtx(
+        ctx,
+        segIndices,
+        forcedOff,
+        tdCount,
+        ctx.tdRequiredByDay,
+      );
       plannedTdDays.push(...tdDays);
+      omittedTdDays.push(...omittedDays);
 
       // Wochenzählung für Limits
       const weekCounts = { iwd: {}, td: {} };
@@ -2057,7 +2081,7 @@ function renderEmployeeList(){
       }
     }
 
-    return { schedule, forcedOff, plannedTdDays };
+    return { schedule, forcedOff, plannedTdDays, omittedTdDays };
   }
 
   function evaluateAttemptCtx(ctx, attempt){
@@ -2945,6 +2969,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
         schedule: { iwd: Array(days.length).fill(null), td: Array(days.length).fill(null) },
         forcedOff: {},
         plannedTdDays: [],
+        omittedTdDays: [],
         monthSummaryByEmpId: {},
         messages: [{ type: 'danger', title: 'Fehler', details: 'Bitte zuerst Mitarbeiter hinzufügen.' }],
       };
@@ -3039,6 +3064,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
         schedule: { iwd: Array(days.length).fill(null), td: Array(days.length).fill(null) },
         forcedOff: {},
         plannedTdDays: [],
+        omittedTdDays: [],
         monthSummaryByEmpId: {},
         messages: [{ type: 'danger', title: 'Fehler', details: 'Konnte keinen Plan erstellen. Bitte Eingaben prüfen.' }],
       };
@@ -3080,6 +3106,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
       schedule: bestAttempt.schedule,
       forcedOff: bestAttempt.forcedOff,
       plannedTdDays: bestAttempt.plannedTdDays || [],
+      omittedTdDays: bestAttempt.omittedTdDays || [],
       monthSummaryByEmpId: monthSummary.summaryByEmpId,
       messages: dedupeMessages(messages),
       generatedAt: new Date().toISOString(),
