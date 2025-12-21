@@ -3173,7 +3173,6 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
     mainThreadAbortController = new AbortController();
     mainThreadSolveActive = true;
     const { signal } = mainThreadAbortController;
-    const solverUrl = new URL('./solver.js', document.baseURI).href;
 
     const callIfCurrent = (fn, ...args) => {
       if (currentJobId !== jobId) return;
@@ -3182,8 +3181,11 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
 
     const run = async () => {
       try {
-        const { solve } = await import(solverUrl);
-        const result = await solve(payload, {
+        const solver = window.DienstplanSolver;
+        if (!solver || typeof solver.solve !== 'function'){
+          throw new Error('Solver konnte nicht geladen werden.');
+        }
+        const result = await solver.solve(payload, {
           onProgress: (done, total, meta) => callIfCurrent(onProgress, done, total, meta),
           signal,
         });
@@ -3276,7 +3278,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
     }
 
     try {
-      solverWorker = new Worker('./solver-worker.js', { type: 'module' });
+      solverWorker = new Worker('./solver-worker.js');
     } catch (err) {
       console.warn('Worker konnte nicht gestartet werden, fallback auf Hauptthread.', err);
       runSolveOnMainThread(payload, { onProgress: handleProgress, onDone: handleDone, onError: handleError, jobId });
