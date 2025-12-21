@@ -903,7 +903,7 @@ function throwIfAborted(signal){
   }
 }
 
-export async function solve(payload, { onProgress, signal } = {}){
+async function solve(payload, { onProgress, signal } = {}){
   const { monthKey, days, segments, employees, settings, blocksByEmpId, tdRequiredByDay } = payload || {};
 
   if (!monthKey || !Array.isArray(days) || !Array.isArray(segments) || !Array.isArray(employees)){
@@ -1074,4 +1074,8 @@ export async function solve(payload, { onProgress, signal } = {}){
       preferGaps: Boolean(settings?.preferGaps),
     },
   };
+}
+
+if (typeof self !== 'undefined'){
+  self.DienstplanSolver = { solve };
 }
