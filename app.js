@@ -3173,6 +3173,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
     mainThreadAbortController = new AbortController();
     mainThreadSolveActive = true;
     const { signal } = mainThreadAbortController;
+    const solverUrl = new URL('./solver.js', document.baseURI).href;
 
     const callIfCurrent = (fn, ...args) => {
       if (currentJobId !== jobId) return;
@@ -3181,7 +3182,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
 
     const run = async () => {
       try {
-        const { solve } = await import('./solver.js');
+        const { solve } = await import(solverUrl);
         const result = await solve(payload, {
           onProgress: (done, total, meta) => callIfCurrent(onProgress, done, total, meta),
           signal,
