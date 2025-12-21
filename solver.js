@@ -897,6 +897,9 @@ function yieldToEventLoop(){
 
 function throwIfAborted(signal){
   if (signal && signal.aborted){
+    if (typeof DOMException === 'function'){
+      throw new DOMException('Aborted', 'AbortError');
+    }
     const err = new Error('Abgebrochen');
     err.name = 'AbortError';
     throw err;
@@ -1005,6 +1008,7 @@ async function solve(payload, { onProgress, signal } = {}){
     }
 
     if (didProgress || ((i + 1) % timeCheckEvery) === 0){
+      throwIfAborted(signal);
       const now = nowMs();
       if (didProgress || (now - lastYield) >= yieldIntervalMs){
         await yieldToEventLoop();

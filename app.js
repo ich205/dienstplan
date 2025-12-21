@@ -3166,15 +3166,34 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
   }
 
   // ---------- Scheduling Worker ----------
+  const MAIN_THREAD_ATTEMPT_CAP = 200000;
+  const PROGRESS_UI_THROTTLE_MS = 100;
   let solverWorker = null;
   let currentJobId = 0;
   let activeSolveReject = null;
   let solveInProgress = false;
   let mainThreadAbortController = null;
   let mainThreadSolveActive = false;
+  let lastUiProgressAt = 0;
 
   function isFileOrigin(){
     return (window.location && (window.location.protocol === 'file:' || window.location.origin === 'null'));
+  }
+
+  function requiresWorker(payload){
+    return Number(payload?.settings?.attempts || 0) > MAIN_THREAD_ATTEMPT_CAP;
+  }
+
+  function clampMainThreadAttempts(payload){
+    if (!payload || !payload.settings) return;
+    const raw = Number(payload.settings.attempts || 0);
+    payload.settings.attempts = Math.min(Math.max(raw, 0), MAIN_THREAD_ATTEMPT_CAP);
+  }
+
+  function nowMs(){
+    return (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
+      ? performance.now()
+      : Date.now();
   }
 
   function cleanupWorker(){
@@ -3267,6 +3286,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
     }
 
     const jobId = ++currentJobId;
+    lastUiProgressAt = 0;
     let workerFallbackTriggered = false;
 
     const finalize = () => {
@@ -3277,7 +3297,13 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
     const handleProgress = (done, total, meta) => {
       if (jobId !== currentJobId) return;
       if (typeof onProgress === 'function'){
-        onProgress(done, total, meta || {});
+        const now = nowMs();
+        const shouldUpdate = (done === total)
+          || (now - lastUiProgressAt) >= PROGRESS_UI_THROTTLE_MS;
+        if (shouldUpdate){
+          lastUiProgressAt = now;
+          onProgress(done, total, meta || {});
+        }
       }
     };
 
@@ -3301,11 +3327,28 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
       }
       workerFallbackTriggered = true;
       cleanupWorker();
+      if (requiresWorker(payload)){
+        handleError(new Error(
+          'Worker ist während der Berechnung abgestürzt. Für hohe Versuche gibt es keinen Main-Thread-Fallback (Crash-Schutz). ' +
+          `Bitte Seite neu laden oder Versuche reduzieren. Details: ${err?.message || err}`
+        ));
+        return;
+      }
       console.warn('Worker fehlgeschlagen, fallback auf Hauptthread.', err);
+      clampMainThreadAttempts(payload);
       runSolveOnMainThread(payload, { onProgress: handleProgress, onDone: handleDone, onError: handleError, jobId });
     };
 
+    if (isFileOrigin() && requiresWorker(payload)){
+      handleError(new Error(
+        'WebWorker ist für hohe Versuche erforderlich. Bitte die Seite über http(s) starten (z.B. `python -m http.server`). ' +
+        'file:// blockiert Worker.'
+      ));
+      return;
+    }
+
     if (isFileOrigin()){
+      clampMainThreadAttempts(payload);
       runSolveOnMainThread(payload, { onProgress: handleProgress, onDone: handleDone, onError: handleError, jobId });
       return;
     }
@@ -3313,7 +3356,15 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
     try {
       solverWorker = new Worker('./solver-worker.js');
     } catch (err) {
+      if (requiresWorker(payload)){
+        handleError(new Error(
+          'Worker konnte nicht gestartet werden. Für hohe Versuche ist Worker Pflicht. ' +
+          `Bitte http(s) nutzen. Details: ${err?.message || err}`
+        ));
+        return;
+      }
       console.warn('Worker konnte nicht gestartet werden, fallback auf Hauptthread.', err);
+      clampMainThreadAttempts(payload);
       runSolveOnMainThread(payload, { onProgress: handleProgress, onDone: handleDone, onError: handleError, jobId });
       return;
     }
@@ -3342,6 +3393,13 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
   }
 
   function cancelSolve(){
+    if (solverWorker){
+      try {
+        solverWorker.postMessage({ type: 'cancel', jobId: currentJobId });
+      } catch (err) {
+        console.warn('Worker-Abbruch konnte nicht gesendet werden.', err);
+      }
+    }
     cleanupWorker();
     if (mainThreadAbortController){
       mainThreadAbortController.abort();
