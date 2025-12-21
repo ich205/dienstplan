@@ -105,6 +105,11 @@ select{
   padding: 8px 8px;
 }
 
+select option{
+  color: #0b0f17;
+  background: #f7f9fc;
+}
+
 input::placeholder{
   color: rgba(231,238,252,.55);
 }
