@@ -3145,6 +3145,105 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
     return out;
   }
 
+  // ---------- Scheduling Worker ----------
+  let solverWorker = null;
+  let currentJobId = 0;
+  let activeSolveReject = null;
+  let solveInProgress = false;
+
+  function buildSolvePayload(){
+    const monthKey = state.month;
+    ensureMonthStructures(monthKey);
+
+    const employees = state.employees.map(normalizeEmployee);
+    const days = getMonthDays(monthKey);
+    const segments = buildWeekSegments(days);
+
+    const settings = {
+      attempts: clamp(Number(state.settings.attempts || 10000), 10, 1000000),
+      preferGaps: Boolean(state.settings.preferGaps),
+    };
+
+    const blocksByEmpId = state.blocksByMonth[monthKey] || {};
+    const tdRequiredByDay = days.map(day => Boolean(getTdRequired(monthKey, day.iso)));
+
+    return {
+      monthKey,
+      days,
+      segments,
+      employees,
+      settings,
+      blocksByEmpId,
+      tdRequiredByDay,
+    };
+  }
+
+  function setSolveUiState(isSolving){
+    solveInProgress = isSolving;
+    if (generateBtn) generateBtn.disabled = isSolving;
+    if (clearBtn){
+      clearBtn.disabled = false;
+      clearBtn.textContent = isSolving ? 'Stop' : 'Ausgabe leeren';
+    }
+  }
+
+  function startSolve(payload, { onProgress, onDone, onError } = {}){
+    if (solverWorker) solverWorker.terminate();
+
+    solverWorker = new Worker('./solver-worker.js', { type: 'module' });
+    const jobId = ++currentJobId;
+
+    const finalize = () => {
+      if (solverWorker){
+        solverWorker.terminate();
+        solverWorker = null;
+      }
+      activeSolveReject = null;
+    };
+
+    solverWorker.onmessage = (e) => {
+      const msg = e.data || {};
+      if (msg.jobId !== jobId) return;
+
+      if (msg.type === 'progress'){
+        if (typeof onProgress === 'function'){
+          onProgress(msg.done, msg.total, msg.meta || {});
+        }
+      } else if (msg.type === 'done'){
+        finalize();
+        if (typeof onDone === 'function') onDone(msg.result);
+      } else if (msg.type === 'error'){
+        finalize();
+        const err = new Error(msg.message || 'Unbekannter Fehler');
+        if (msg.stack) err.stack = msg.stack;
+        if (typeof onError === 'function') onError(err);
+      }
+    };
+
+    solverWorker.onerror = (err) => {
+      finalize();
+      if (typeof onError === 'function'){
+        const e = err instanceof Error ? err : new Error(String(err));
+        onError(e);
+      }
+    };
+
+    solverWorker.postMessage({ jobId, payload });
+  }
+
+  function cancelSolve(){
+    if (solverWorker){
+      solverWorker.terminate();
+      solverWorker = null;
+    }
+    if (typeof activeSolveReject === 'function'){
+      const err = new Error('Abgebrochen');
+      err.name = 'AbortError';
+      activeSolveReject(err);
+      activeSolveReject = null;
+    }
+  }
+
   // ---------- Events ----------
   monthSelectEl.addEventListener('change', () => {
     const v = String(monthSelectEl.value || '').trim();
@@ -3348,37 +3447,51 @@ blockTableEl.addEventListener('click', (ev) => {
     const totalAttempts = clamp(toInt(state.settings.attempts, 10000), 10, 1000000);
 
     try{
-      generateBtn.disabled = true;
-      clearBtn.disabled = true;
+      setSolveUiState(true);
 
       setProgressVisible(true);
       resetProgress();
       updateProgress(0, totalAttempts, 'Start…');
       await nextFrame();
 
-      const res = await generateMonthPlan({
-        onProgress: (done, total, info) => {
-          const sec = (info && typeof info.elapsedMs === 'number') ? Math.round(info.elapsedMs / 1000) : null;
-          const extra = (sec !== null) ? `Zeit: ${sec}s` : '';
-          updateProgress(done, total, extra);
-        },
+      const res = await new Promise((resolve, reject) => {
+        activeSolveReject = reject;
+        startSolve(buildSolvePayload(), {
+          onProgress: (done, total, info) => {
+            const sec = (info && typeof info.elapsedMs === 'number') ? Math.round(info.elapsedMs / 1000) : null;
+            const extra = (sec !== null) ? `Zeit: ${sec}s` : '';
+            updateProgress(done, total, extra);
+          },
+          onDone: resolve,
+          onError: reject,
+        });
       });
 
       state.lastResultByMonth[state.month] = res;
       saveState();
       renderAll();
     }catch(e){
-      console.error(e);
-      alert(`Generierung fehlgeschlagen: ${e && e.message ? e.message : e}`);
+      if (e && e.name === 'AbortError'){
+        console.warn('Generierung abgebrochen.');
+      } else {
+        console.error(e);
+        alert(`Generierung fehlgeschlagen: ${e && e.message ? e.message : e}`);
+      }
     } finally {
-      generateBtn.disabled = false;
-      clearBtn.disabled = false;
+      setSolveUiState(false);
       setProgressVisible(false);
       resetProgress();
     }
   });
 
   clearBtn.addEventListener('click', () => {
+    if (solveInProgress){
+      cancelSolve();
+      setSolveUiState(false);
+      setProgressVisible(false);
+      resetProgress();
+      return;
+    }
     state.lastResultByMonth[state.month] = null;
     saveState();
     renderAll();
