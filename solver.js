@@ -895,7 +895,15 @@ function yieldToEventLoop(){
   });
 }
 
-function throwIfAborted(signal){
+function throwIfAborted(signal, shouldCancel){
+  if (typeof shouldCancel === 'function' && shouldCancel()){
+    if (typeof DOMException === 'function'){
+      throw new DOMException('Aborted', 'AbortError');
+    }
+    const err = new Error('Abgebrochen');
+    err.name = 'AbortError';
+    throw err;
+  }
   if (signal && signal.aborted){
     if (typeof DOMException === 'function'){
       throw new DOMException('Aborted', 'AbortError');
@@ -906,14 +914,14 @@ function throwIfAborted(signal){
   }
 }
 
-async function solve(payload, { onProgress, signal } = {}){
+async function solve(payload, { onProgress, signal, shouldCancel } = {}){
   const { monthKey, days, segments, employees, settings, blocksByEmpId, tdRequiredByDay } = payload || {};
 
   if (!monthKey || !Array.isArray(days) || !Array.isArray(segments) || !Array.isArray(employees)){
     throw new Error('Ungültige Solver-Daten.');
   }
 
-  throwIfAborted(signal);
+  throwIfAborted(signal, shouldCancel);
 
   const ctx = buildMonthContext({
     monthKey,
@@ -988,7 +996,7 @@ async function solve(payload, { onProgress, signal } = {}){
   }
 
   for (let i = 0; i < totalAttempts; i++){
-    throwIfAborted(signal);
+    throwIfAborted(signal, shouldCancel);
 
     const attempt = buildScheduleAttemptCtx(ctx);
     const evCost = evaluateAttemptCtx(ctx, attempt);
@@ -1008,7 +1016,7 @@ async function solve(payload, { onProgress, signal } = {}){
     }
 
     if (didProgress || ((i + 1) % timeCheckEvery) === 0){
-      throwIfAborted(signal);
+      throwIfAborted(signal, shouldCancel);
       const now = nowMs();
       if (didProgress || (now - lastYield) >= yieldIntervalMs){
         await yieldToEventLoop();
@@ -1081,5 +1089,43 @@ async function solve(payload, { onProgress, signal } = {}){
 }
 
 if (typeof self !== 'undefined'){
-  self.DienstplanSolver = { solve };
+  const inlineHelperFns = [
+    clamp,
+    round1,
+    defaultEmpPrefs,
+    sanitizePrefs,
+    balanceMonthlyAdjustment,
+    getBlockFromMap,
+    buildMonthContext,
+    blockStageAllows,
+    isEmployeeAvailableCtx,
+    countAvailableForDayCtx,
+    selectTdDaysWithOmissionsCtx,
+    scoreIwdCtx,
+    scoreTdCtx,
+    chooseEmployeeForShiftCtx,
+    chooseTdCount,
+    buildScheduleAttemptCtx,
+    evaluateAttemptCtx,
+    buildMonthSummaryCtx,
+    dedupeMessages,
+    nowMs,
+    yieldToEventLoop,
+    throwIfAborted,
+  ];
+
+  const getInlineWorkerSource = () => {
+    const helpersSource = inlineHelperFns.map(fn => fn.toString()).join('\n\n');
+    return [
+      `const BLOCK = ${JSON.stringify(BLOCK)};`,
+      `const SHIFT = ${JSON.stringify(SHIFT)};`,
+      '',
+      helpersSource,
+      '',
+      solve.toString(),
+    ].join('\n');
+  };
+
+  self.DienstplanSolver = { solve, getInlineWorkerSource };
+  self.solve = solve;
 }

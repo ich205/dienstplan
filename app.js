@@ -3184,6 +3184,59 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
     return Number(payload?.settings?.attempts || 0) > MAIN_THREAD_ATTEMPT_CAP;
   }
 
+  function createWorkerFromSource(source){
+    const blob = new Blob([source], { type: 'text/javascript' });
+    const url = URL.createObjectURL(blob);
+    const worker = new Worker(url);
+    worker.__blobUrl = url;
+    worker.__cleanup = () => URL.revokeObjectURL(url);
+    return worker;
+  }
+
+  function buildInlineWorkerSource(){
+    if (!window.DienstplanSolver || typeof window.DienstplanSolver.getInlineWorkerSource !== 'function'){
+      throw new Error('solve() ist nicht global verfügbar – kann keinen Inline-Worker bauen.');
+    }
+
+    const solveSource = window.DienstplanSolver.getInlineWorkerSource();
+
+    return `
+${solveSource}
+
+let cancelled = false;
+
+self.onmessage = async (e) => {
+  const msg = e.data || {};
+  if (msg.type === 'cancel') { cancelled = true; return; }
+
+  if (msg.type === 'start') {
+    cancelled = false;
+    try {
+      const payload = msg.payload;
+
+      const t0 = performance.now();
+      let lastProgress = 0;
+
+      const result = await solve(payload, {
+        shouldCancel: () => cancelled,
+        onProgress: (done, total, meta) => {
+          const now = performance.now();
+          if (now - lastProgress > 100) {
+            lastProgress = now;
+            self.postMessage({ type: 'progress', done, total, meta });
+          }
+        },
+      });
+
+      self.postMessage({ type: 'done', result, ms: Math.round(performance.now() - t0) });
+    } catch (err) {
+      self.postMessage({ type: 'error', message: err?.message || String(err) });
+    }
+  }
+};
+`;
+  }
+
   function clampMainThreadAttempts(payload){
     if (!payload || !payload.settings) return;
     const raw = Number(payload.settings.attempts || 0);
@@ -3199,6 +3252,9 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
   function cleanupWorker(){
     if (solverWorker){
       solverWorker.terminate();
+      if (typeof solverWorker.__cleanup === 'function'){
+        solverWorker.__cleanup();
+      }
       solverWorker = null;
     }
   }
@@ -3339,39 +3395,43 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
       runSolveOnMainThread(payload, { onProgress: handleProgress, onDone: handleDone, onError: handleError, jobId });
     };
 
-    if (isFileOrigin() && requiresWorker(payload)){
-      handleError(new Error(
-        'WebWorker ist für hohe Versuche erforderlich. Bitte die Seite über http(s) starten (z.B. `python -m http.server`). ' +
-        'file:// blockiert Worker.'
-      ));
-      return;
-    }
-
-    if (isFileOrigin()){
+    if (isFileOrigin() && !requiresWorker(payload)){
       clampMainThreadAttempts(payload);
       runSolveOnMainThread(payload, { onProgress: handleProgress, onDone: handleDone, onError: handleError, jobId });
       return;
     }
+
+    const startInlineWorker = () => {
+      solverWorker = createWorkerFromSource(buildInlineWorkerSource());
+    };
 
     try {
-      solverWorker = new Worker('./solver-worker.js');
+      if (!isFileOrigin()){
+        solverWorker = new Worker('./solver-worker.js');
+      } else {
+        startInlineWorker();
+      }
     } catch (err) {
-      if (requiresWorker(payload)){
-        handleError(new Error(
-          'Worker konnte nicht gestartet werden. Für hohe Versuche ist Worker Pflicht. ' +
-          `Bitte http(s) nutzen. Details: ${err?.message || err}`
-        ));
+      try {
+        startInlineWorker();
+      } catch (inlineErr) {
+        if (requiresWorker(payload)){
+          handleError(new Error(
+            'Worker konnte nicht gestartet werden. Für hohe Versuche ist Worker Pflicht. ' +
+            `Details: ${inlineErr?.message || inlineErr}`
+          ));
+          return;
+        }
+        console.warn('Worker konnte nicht gestartet werden, fallback auf Hauptthread.', inlineErr);
+        clampMainThreadAttempts(payload);
+        runSolveOnMainThread(payload, { onProgress: handleProgress, onDone: handleDone, onError: handleError, jobId });
         return;
       }
-      console.warn('Worker konnte nicht gestartet werden, fallback auf Hauptthread.', err);
-      clampMainThreadAttempts(payload);
-      runSolveOnMainThread(payload, { onProgress: handleProgress, onDone: handleDone, onError: handleError, jobId });
-      return;
     }
 
     solverWorker.onmessage = (e) => {
       const msg = e.data || {};
-      if (msg.jobId !== jobId) return;
+      if (msg.jobId && msg.jobId !== jobId) return;
 
       if (msg.type === 'progress'){
         handleProgress(msg.done, msg.total, msg.meta);
@@ -3389,7 +3449,11 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
       fallbackToMainThread(e);
     };
 
-    solverWorker.postMessage({ jobId, payload });
+    if (solverWorker.__blobUrl){
+      solverWorker.postMessage({ type: 'start', jobId, payload });
+    } else {
+      solverWorker.postMessage({ jobId, payload });
+    }
   }
 
   function cancelSolve(){
