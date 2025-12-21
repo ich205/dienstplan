@@ -3168,13 +3168,18 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
   // ---------- Scheduling Worker ----------
   const MAIN_THREAD_ATTEMPT_CAP = 200000;
   const PROGRESS_UI_THROTTLE_MS = 100;
-  let solverWorker = null;
+  const WATCHDOG_SLICE_MS = 15000;
   let currentJobId = 0;
   let activeSolveReject = null;
   let solveInProgress = false;
   let mainThreadAbortController = null;
   let mainThreadSolveActive = false;
   let lastUiProgressAt = 0;
+  let lastProgressSnapshot = { done: 0, total: 0 };
+  let abortRequested = false;
+  let activeSliceWorker = null;
+  let activeSliceReject = null;
+  let WORKER_URL = null;
 
   function isFileOrigin(){
     return (window.location && (window.location.protocol === 'file:' || window.location.origin === 'null'));
@@ -3184,14 +3189,20 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
     return Number(payload?.settings?.attempts || 0) > MAIN_THREAD_ATTEMPT_CAP;
   }
 
-  function createWorkerFromSource(source){
-    const blob = new Blob([source], { type: 'text/javascript' });
-    const url = URL.createObjectURL(blob);
-    const worker = new Worker(url);
-    worker.__blobUrl = url;
-    worker.__cleanup = () => URL.revokeObjectURL(url);
-    return worker;
+  function getWorkerUrl(){
+    if (!WORKER_URL){
+      const source = buildInlineWorkerSource();
+      WORKER_URL = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+    }
+    return WORKER_URL;
   }
+
+  window.addEventListener('beforeunload', () => {
+    if (WORKER_URL){
+      URL.revokeObjectURL(WORKER_URL);
+      WORKER_URL = null;
+    }
+  });
 
   function buildInlineWorkerSource(){
     if (!window.DienstplanSolver || typeof window.DienstplanSolver.getInlineWorkerSource !== 'function'){
@@ -3203,35 +3214,57 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
     return `
 ${solveSource}
 
-let cancelled = false;
+const MIN_PROGRESS_POST_MS = 100;
+
+function nowMs(){
+  return (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
+    ? performance.now()
+    : Date.now();
+}
 
 self.onmessage = async (e) => {
   const msg = e.data || {};
-  if (msg.type === 'cancel') { cancelled = true; return; }
+  if (msg.type !== 'slice') return;
 
-  if (msg.type === 'start') {
-    cancelled = false;
-    try {
-      const payload = msg.payload;
+  try {
+    const payload = msg.payload;
+    const sliceAttempts = Math.max(0, Number(msg.sliceAttempts || 0));
 
-      const t0 = performance.now();
-      let lastProgress = 0;
-
-      const result = await solve(payload, {
-        shouldCancel: () => cancelled,
-        onProgress: (done, total, meta) => {
-          const now = performance.now();
-          if (now - lastProgress > 100) {
-            lastProgress = now;
-            self.postMessage({ type: 'progress', done, total, meta });
-          }
-        },
-      });
-
-      self.postMessage({ type: 'done', result, ms: Math.round(performance.now() - t0) });
-    } catch (err) {
-      self.postMessage({ type: 'error', message: err?.message || String(err) });
+    let state = Number.isFinite(msg.rngState) ? (msg.rngState >>> 0) : (Date.now() >>> 0);
+    function xorshift32(){
+      state ^= (state << 13);
+      state ^= (state >>> 17);
+      state ^= (state << 5);
+      state >>>= 0;
+      return state;
     }
+    Math.random = () => (xorshift32() / 4294967296);
+
+    const slicePayload = {
+      ...payload,
+      settings: { ...(payload?.settings || {}), attempts: sliceAttempts },
+    };
+
+    let lastProgress = 0;
+
+    const result = await solve(slicePayload, {
+      onProgress: (done, total, meta) => {
+        const now = nowMs();
+        if (done === total || (now - lastProgress) >= MIN_PROGRESS_POST_MS) {
+          lastProgress = now;
+          self.postMessage({
+            type: 'progress',
+            done,
+            totalSlice: total,
+            bestCost: meta && typeof meta.bestCost === 'number' ? meta.bestCost : null,
+          });
+        }
+      },
+    });
+
+    self.postMessage({ type: 'done', result: { best: result, rngState: state } });
+  } catch (err) {
+    self.postMessage({ type: 'error', message: err?.message || String(err) });
   }
 };
 `;
@@ -3249,19 +3282,241 @@ self.onmessage = async (e) => {
       : Date.now();
   }
 
-  function cleanupWorker(){
-    if (solverWorker){
-      solverWorker.terminate();
-      if (typeof solverWorker.__cleanup === 'function'){
-        solverWorker.__cleanup();
-      }
-      solverWorker = null;
+  function cleanupActiveWorker(){
+    if (activeSliceWorker){
+      activeSliceWorker.terminate();
+      activeSliceWorker = null;
     }
+    activeSliceReject = null;
   }
 
   function cleanupMainThreadSolve(){
     mainThreadAbortController = null;
     mainThreadSolveActive = false;
+  }
+
+  function toAbortError(){
+    const err = new Error('Abgebrochen');
+    err.name = 'AbortError';
+    return err;
+  }
+
+  function updateProgressSnapshot(done, total, extra){
+    lastProgressSnapshot = { done, total };
+    updateProgress(done, total, extra);
+  }
+
+  function showNonFatalWarning(message){
+    console.warn(message);
+    if (lastProgressSnapshot.total){
+      updateProgressSnapshot(
+        lastProgressSnapshot.done,
+        lastProgressSnapshot.total,
+        `Warnung: ${message}`
+      );
+    }
+  }
+
+  function createSliceWorker(){
+    if (!isFileOrigin()){
+      try {
+        return new Worker('./solver-worker.js');
+      } catch (err) {
+        return new Worker(getWorkerUrl());
+      }
+    }
+    return new Worker(getWorkerUrl());
+  }
+
+  function runOneSliceInFreshWorker({ payload, offset, sliceAttempts, rngState, watchdogMs, onSliceProgress }){
+    return new Promise((resolve, reject) => {
+      if (abortRequested){
+        reject(toAbortError());
+        return;
+      }
+
+      let w;
+      try {
+        w = createSliceWorker();
+      } catch (err) {
+        reject(err);
+        return;
+      }
+
+      activeSliceWorker = w;
+      activeSliceReject = reject;
+
+      let finished = false;
+      let lastMsgAt = Date.now();
+
+      const watchdog = setInterval(() => {
+        if (Date.now() - lastMsgAt > watchdogMs){
+          cleanup();
+          reject(new Error('Watchdog: Worker unresponsive'));
+        }
+      }, 500);
+
+      const cleanup = () => {
+        if (finished) return;
+        finished = true;
+        clearInterval(watchdog);
+        w.onmessage = null;
+        w.onerror = null;
+        try { w.terminate(); } catch {}
+        if (activeSliceWorker === w){
+          activeSliceWorker = null;
+          activeSliceReject = null;
+        }
+      };
+
+      w.onerror = (e) => {
+        cleanup();
+        reject(new Error(`Worker error: ${e?.message || e}`));
+      };
+
+      w.onmessage = (e) => {
+        lastMsgAt = Date.now();
+        const msg = e.data || {};
+
+        if (msg.type === 'progress'){
+          if (typeof onSliceProgress === 'function'){
+            onSliceProgress(msg);
+          }
+          return;
+        }
+
+        if (msg.type === 'done'){
+          cleanup();
+          resolve(msg.result);
+          return;
+        }
+
+        if (msg.type === 'error'){
+          cleanup();
+          reject(new Error(msg.message || 'Worker reported error'));
+        }
+      };
+
+      w.postMessage({
+        type: 'slice',
+        payload,
+        offset,
+        sliceAttempts,
+        rngState,
+      });
+    });
+  }
+
+  function pickBetter(prev, next){
+    if (!prev) return next;
+    if (!next) return prev;
+    const prevCost = Number(prev.bestCost);
+    const nextCost = Number(next.bestCost);
+    if (!Number.isFinite(prevCost)) return next;
+    if (!Number.isFinite(nextCost)) return prev;
+    return nextCost < prevCost ? next : prev;
+  }
+
+  async function runSolveResilient(payload, { onProgress } = {}){
+    const total = Number(payload?.settings?.attempts || 0);
+    let done = 0;
+    let best = null;
+
+    let chunk = Math.min(250000, total || 0);
+    const MIN_CHUNK = 10000;
+    const MAX_CHUNK = 1000000;
+
+    let consecutiveOk = 0;
+    let consecutiveFails = 0;
+
+    let rngState = Number.isFinite(payload?.settings?.seed)
+      ? (payload.settings.seed >>> 0)
+      : (Date.now() >>> 0);
+
+    const t0 = nowMs();
+
+    while (done < total){
+      if (abortRequested){
+        throw toAbortError();
+      }
+
+      const sliceAttempts = Math.min(chunk, total - done);
+
+      try {
+        const res = await runOneSliceInFreshWorker({
+          payload,
+          offset: done,
+          sliceAttempts,
+          rngState,
+          watchdogMs: WATCHDOG_SLICE_MS,
+          onSliceProgress: (msg) => {
+            const sliceDone = Number(msg.done || 0);
+            const totalSlice = Number(msg.totalSlice || sliceAttempts);
+            const overallDone = Math.min(done + sliceDone, total);
+            if (typeof onProgress === 'function'){
+              onProgress(overallDone, total, {
+                bestCost: msg.bestCost ?? best?.bestCost,
+                elapsedMs: nowMs() - t0,
+                sliceDone,
+                totalSlice,
+              });
+            }
+          },
+        });
+
+        if (res && res.best){
+          best = pickBetter(best, res.best);
+        }
+        if (res && Number.isFinite(res.rngState)){
+          rngState = res.rngState >>> 0;
+        }
+
+        done += sliceAttempts;
+
+        if (typeof onProgress === 'function'){
+          onProgress(done, total, {
+            bestCost: best?.bestCost ?? null,
+            elapsedMs: nowMs() - t0,
+          });
+        }
+
+        consecutiveOk += 1;
+        consecutiveFails = 0;
+
+        if (consecutiveOk >= 3){
+          chunk = Math.min(MAX_CHUNK, Math.floor(chunk * 1.25));
+          consecutiveOk = 0;
+        }
+      } catch (err) {
+        if (abortRequested || err?.name === 'AbortError'){
+          throw err;
+        }
+
+        consecutiveFails += 1;
+        consecutiveOk = 0;
+        chunk = Math.max(MIN_CHUNK, Math.floor(chunk / 2));
+
+        if (consecutiveFails >= 6){
+          throw new Error(
+            `Generierung instabil: zu viele Slice-Fehler hintereinander. Letzter Fehler: ${err?.message || err}`
+          );
+        }
+
+        showNonFatalWarning(`Slice fehlgeschlagen, retry mit kleinerem Chunk (${chunk}): ${err?.message || err}`);
+      }
+    }
+
+    if (best){
+      best.attemptsUsed = total;
+      if (best.settings){
+        best.settings.attempts = total;
+      } else {
+        best.settings = { attempts: total, preferGaps: Boolean(payload?.settings?.preferGaps) };
+      }
+      best.generatedAt = new Date().toISOString();
+    }
+
+    return best;
   }
 
   function runSolveOnMainThread(payload, { onProgress, onDone, onError, jobId } = {}){
@@ -3335,7 +3590,7 @@ self.onmessage = async (e) => {
   }
 
   function startSolve(payload, { onProgress, onDone, onError } = {}){
-    cleanupWorker();
+    cleanupActiveWorker();
     if (mainThreadAbortController){
       mainThreadAbortController.abort();
       cleanupMainThreadSolve();
@@ -3343,12 +3598,8 @@ self.onmessage = async (e) => {
 
     const jobId = ++currentJobId;
     lastUiProgressAt = 0;
-    let workerFallbackTriggered = false;
-
-    const finalize = () => {
-      cleanupWorker();
-      activeSolveReject = null;
-    };
+    abortRequested = false;
+    const startedAt = nowMs();
 
     const handleProgress = (done, total, meta) => {
       if (jobId !== currentJobId) return;
@@ -3358,121 +3609,66 @@ self.onmessage = async (e) => {
           || (now - lastUiProgressAt) >= PROGRESS_UI_THROTTLE_MS;
         if (shouldUpdate){
           lastUiProgressAt = now;
-          onProgress(done, total, meta || {});
+          const elapsedMs = meta && typeof meta.elapsedMs === 'number'
+            ? meta.elapsedMs
+            : (now - startedAt);
+          onProgress(done, total, { ...meta, elapsedMs });
         }
       }
     };
 
-    const handleDone = (result) => {
-      finalize();
-      if (jobId !== currentJobId) return;
-      if (typeof onDone === 'function') onDone(result);
-    };
-
-    const handleError = (err) => {
-      finalize();
-      if (jobId !== currentJobId) return;
-      if (typeof onError === 'function') onError(err);
-    };
-
-    const fallbackToMainThread = (err) => {
-      if (jobId !== currentJobId) return;
-      if (workerFallbackTriggered){
-        handleError(err);
-        return;
-      }
-      workerFallbackTriggered = true;
-      cleanupWorker();
-      if (requiresWorker(payload)){
-        handleError(new Error(
-          'Worker ist während der Berechnung abgestürzt. Für hohe Versuche gibt es keinen Main-Thread-Fallback (Crash-Schutz). ' +
-          `Bitte Seite neu laden oder Versuche reduzieren. Details: ${err?.message || err}`
-        ));
-        return;
-      }
-      console.warn('Worker fehlgeschlagen, fallback auf Hauptthread.', err);
-      clampMainThreadAttempts(payload);
-      runSolveOnMainThread(payload, { onProgress: handleProgress, onDone: handleDone, onError: handleError, jobId });
-    };
-
-    if (isFileOrigin() && !requiresWorker(payload)){
-      clampMainThreadAttempts(payload);
-      runSolveOnMainThread(payload, { onProgress: handleProgress, onDone: handleDone, onError: handleError, jobId });
-      return;
-    }
-
-    const startInlineWorker = () => {
-      solverWorker = createWorkerFromSource(buildInlineWorkerSource());
-    };
-
-    try {
-      if (!isFileOrigin()){
-        solverWorker = new Worker('./solver-worker.js');
-      } else {
-        startInlineWorker();
-      }
-    } catch (err) {
+    const run = async () => {
       try {
-        startInlineWorker();
-      } catch (inlineErr) {
-        if (requiresWorker(payload)){
-          handleError(new Error(
-            'Worker konnte nicht gestartet werden. Für hohe Versuche ist Worker Pflicht. ' +
-            `Details: ${inlineErr?.message || inlineErr}`
-          ));
-          return;
+        let result;
+        try {
+          result = await runSolveResilient(payload, { onProgress: handleProgress });
+        } catch (err) {
+          if (!requiresWorker(payload)){
+            console.warn('Worker fehlgeschlagen, fallback auf Hauptthread.', err);
+            clampMainThreadAttempts(payload);
+            result = await new Promise((resolve, reject) => {
+              runSolveOnMainThread(payload, {
+                onProgress: handleProgress,
+                onDone: resolve,
+                onError: reject,
+                jobId,
+              });
+            });
+          } else {
+            throw err;
+          }
         }
-        console.warn('Worker konnte nicht gestartet werden, fallback auf Hauptthread.', inlineErr);
-        clampMainThreadAttempts(payload);
-        runSolveOnMainThread(payload, { onProgress: handleProgress, onDone: handleDone, onError: handleError, jobId });
-        return;
-      }
-    }
-
-    solverWorker.onmessage = (e) => {
-      const msg = e.data || {};
-      if (msg.jobId && msg.jobId !== jobId) return;
-
-      if (msg.type === 'progress'){
-        handleProgress(msg.done, msg.total, msg.meta);
-      } else if (msg.type === 'done'){
-        handleDone(msg.result);
-      } else if (msg.type === 'error'){
-        const err = new Error(msg.message || 'Unbekannter Fehler');
-        if (msg.stack) err.stack = msg.stack;
-        handleError(err);
+        if (jobId !== currentJobId) return;
+        if (typeof onDone === 'function') onDone(result);
+      } catch (err) {
+        if (jobId !== currentJobId) return;
+        if (typeof onError === 'function') onError(err);
+      } finally {
+        if (jobId === currentJobId){
+          activeSolveReject = null;
+        }
       }
     };
 
-    solverWorker.onerror = (err) => {
-      const e = err instanceof Error ? err : new Error(String(err));
-      fallbackToMainThread(e);
-    };
-
-    if (solverWorker.__blobUrl){
-      solverWorker.postMessage({ type: 'start', jobId, payload });
-    } else {
-      solverWorker.postMessage({ jobId, payload });
-    }
+    void run();
   }
 
   function cancelSolve(){
-    if (solverWorker){
+    abortRequested = true;
+    if (activeSliceWorker){
       try {
-        solverWorker.postMessage({ type: 'cancel', jobId: currentJobId });
+        activeSliceWorker.terminate();
       } catch (err) {
-        console.warn('Worker-Abbruch konnte nicht gesendet werden.', err);
+        console.warn('Worker-Abbruch konnte nicht durchgeführt werden.', err);
       }
     }
-    cleanupWorker();
+    cleanupActiveWorker();
     if (mainThreadAbortController){
       mainThreadAbortController.abort();
       cleanupMainThreadSolve();
     }
     if (typeof activeSolveReject === 'function'){
-      const err = new Error('Abgebrochen');
-      err.name = 'AbortError';
-      activeSolveReject(err);
+      activeSolveReject(toAbortError());
       activeSolveReject = null;
     }
   }
@@ -3684,7 +3880,7 @@ blockTableEl.addEventListener('click', (ev) => {
 
       setProgressVisible(true);
       resetProgress();
-      updateProgress(0, totalAttempts, 'Start…');
+      updateProgressSnapshot(0, totalAttempts, 'Start…');
       await nextFrame();
 
       const res = await new Promise((resolve, reject) => {
@@ -3693,7 +3889,7 @@ blockTableEl.addEventListener('click', (ev) => {
           onProgress: (done, total, info) => {
             const sec = (info && typeof info.elapsedMs === 'number') ? Math.round(info.elapsedMs / 1000) : null;
             const extra = (sec !== null) ? `Zeit: ${sec}s` : '';
-            updateProgress(done, total, extra);
+            updateProgressSnapshot(done, total, extra);
           },
           onDone: resolve,
           onError: reject,
