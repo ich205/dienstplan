@@ -972,7 +972,7 @@ async function solve(payload, { onProgress, signal } = {}){
   let bestAttempt = null;
   let bestCost = Infinity;
 
-  const totalAttempts = clamp(Number(settings?.attempts || 10000), 10000, 10000000);
+  const totalAttempts = clamp(Number(settings?.attempts || 10000), 10000, 1000000000);
   const progressEvery = Math.max(50, Math.round(totalAttempts / 200));
   const timeCheckEvery = 50;
   const yieldIntervalMs = 50;

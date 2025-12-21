@@ -222,6 +222,7 @@
     1000000,
     5000000,
     10000000,
+    1000000000,
   ];
 
   function normalizeAttempts(value){
@@ -3266,6 +3267,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
     }
 
     const jobId = ++currentJobId;
+    let workerFallbackTriggered = false;
 
     const finalize = () => {
       cleanupWorker();
@@ -3289,6 +3291,18 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
       finalize();
       if (jobId !== currentJobId) return;
       if (typeof onError === 'function') onError(err);
+    };
+
+    const fallbackToMainThread = (err) => {
+      if (jobId !== currentJobId) return;
+      if (workerFallbackTriggered){
+        handleError(err);
+        return;
+      }
+      workerFallbackTriggered = true;
+      cleanupWorker();
+      console.warn('Worker fehlgeschlagen, fallback auf Hauptthread.', err);
+      runSolveOnMainThread(payload, { onProgress: handleProgress, onDone: handleDone, onError: handleError, jobId });
     };
 
     if (isFileOrigin()){
@@ -3321,7 +3335,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
 
     solverWorker.onerror = (err) => {
       const e = err instanceof Error ? err : new Error(String(err));
-      handleError(e);
+      fallbackToMainThread(e);
     };
 
     solverWorker.postMessage({ jobId, payload });
