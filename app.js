@@ -216,6 +216,46 @@
     return Math.max(min, Math.min(max, n));
   }
 
+  const ATTEMPT_OPTIONS = [
+    10000,
+    100000,
+    1000000,
+    10000000,
+    100000000,
+    1000000000,
+  ];
+  const MAX_ATTEMPTS_FILE_ORIGIN = 1000000;
+
+  function normalizeAttempts(value){
+    const n = Number(value);
+    if (!Number.isFinite(n)) return ATTEMPT_OPTIONS[0];
+    if (n <= ATTEMPT_OPTIONS[0]) return ATTEMPT_OPTIONS[0];
+    if (n >= ATTEMPT_OPTIONS[ATTEMPT_OPTIONS.length - 1]) return ATTEMPT_OPTIONS[ATTEMPT_OPTIONS.length - 1];
+
+    return ATTEMPT_OPTIONS.reduce((best, option) => (
+      Math.abs(option - n) < Math.abs(best - n) ? option : best
+    ), ATTEMPT_OPTIONS[0]);
+  }
+
+  function resolveAttemptsForSolve({ applyState = false } = {}){
+    const normalized = normalizeAttempts(state.settings.attempts);
+    let attempts = normalized;
+    let downgraded = false;
+
+    if (isFileOrigin() && attempts > MAX_ATTEMPTS_FILE_ORIGIN){
+      attempts = MAX_ATTEMPTS_FILE_ORIGIN;
+      downgraded = true;
+    }
+
+    if (applyState && attempts !== state.settings.attempts){
+      state.settings.attempts = attempts;
+      if (attemptsInputEl) attemptsInputEl.value = attempts;
+      saveState();
+    }
+
+    return { attempts, downgraded };
+  }
+
   function toNumber(value, fallback = 0){
     const n = Number(value);
     return Number.isFinite(n) ? n : fallback;
@@ -545,7 +585,7 @@
       }
 
       // Normalize settings
-      state.settings.attempts = clamp(toInt(state.settings.attempts, 10000), 10, 1000000);
+      state.settings.attempts = normalizeAttempts(state.settings.attempts);
       state.settings.preferGaps = Boolean(state.settings.preferGaps);
 
       return state;
@@ -664,7 +704,7 @@
     }
 
     // Normalize settings
-    state.settings.attempts = clamp(toInt(state.settings.attempts, 10000), 10, 1000000);
+    state.settings.attempts = normalizeAttempts(state.settings.attempts);
     state.settings.preferGaps = Boolean(state.settings.preferGaps);
 
     ensureMonthStructures(state.month);
@@ -2965,7 +3005,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
     const segments = buildWeekSegments(days);
 
     const settings = {
-      attempts: clamp(Number(state.settings.attempts || 10000), 10, 1000000),
+      attempts: resolveAttemptsForSolve().attempts,
       preferGaps: Boolean(state.settings.preferGaps),
     };
 
@@ -3025,7 +3065,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
 
     const totalAttempts = settings.attempts;
     // Progress-Updates: bei 100.000 Versuchen nicht zu chatty
-    const progressEvery = clamp(Math.round(totalAttempts / 200), 50, 2000);
+    const progressEvery = Math.max(50, Math.round(totalAttempts / 200));
     const timeCheckEvery = 50;
     const yieldIntervalMs = 50;
     const nowMs = () => (
@@ -3212,7 +3252,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
     const segments = buildWeekSegments(days);
 
     const settings = {
-      attempts: clamp(Number(state.settings.attempts || 10000), 10, 1000000),
+      attempts: resolveAttemptsForSolve().attempts,
       preferGaps: Boolean(state.settings.preferGaps),
     };
 
@@ -3334,7 +3374,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
   });
 
   attemptsInputEl.addEventListener('change', () => {
-    state.settings.attempts = clamp(toInt(attemptsInputEl.value, 10000), 10, 1000000);
+    state.settings.attempts = normalizeAttempts(attemptsInputEl.value);
     attemptsInputEl.value = state.settings.attempts;
     saveState();
   });
@@ -3522,7 +3562,11 @@ blockTableEl.addEventListener('click', (ev) => {
       return;
     }
 
-    const totalAttempts = clamp(toInt(state.settings.attempts, 10000), 10, 1000000);
+    const { attempts: totalAttempts, downgraded } = resolveAttemptsForSolve({ applyState: true });
+
+    if (downgraded){
+      alert('Hinweis: Bei Datei-Aufruf (file://) sind maximal 1.000.000 Versuche möglich, um Browser-Abstürze zu vermeiden.');
+    }
 
     try{
       setSolveUiState(true);
@@ -3627,7 +3671,7 @@ blockTableEl.addEventListener('click', (ev) => {
         state.month = base.month;
       }
 
-      state.settings.attempts = clamp(toInt(state.settings.attempts, 10000), 10, 1000000);
+      state.settings.attempts = normalizeAttempts(state.settings.attempts);
       state.settings.preferGaps = Boolean(state.settings.preferGaps);
 
       ensureMonthStructures(state.month);
