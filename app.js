@@ -3150,6 +3150,55 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
   let currentJobId = 0;
   let activeSolveReject = null;
   let solveInProgress = false;
+  let mainThreadAbortController = null;
+  let mainThreadSolveActive = false;
+
+  function isFileOrigin(){
+    return (window.location && (window.location.protocol === 'file:' || window.location.origin === 'null'));
+  }
+
+  function cleanupWorker(){
+    if (solverWorker){
+      solverWorker.terminate();
+      solverWorker = null;
+    }
+  }
+
+  function cleanupMainThreadSolve(){
+    mainThreadAbortController = null;
+    mainThreadSolveActive = false;
+  }
+
+  function runSolveOnMainThread(payload, { onProgress, onDone, onError, jobId } = {}){
+    mainThreadAbortController = new AbortController();
+    mainThreadSolveActive = true;
+    const { signal } = mainThreadAbortController;
+
+    const callIfCurrent = (fn, ...args) => {
+      if (currentJobId !== jobId) return;
+      if (typeof fn === 'function') fn(...args);
+    };
+
+    const run = async () => {
+      try {
+        const { solve } = await import('./solver.js');
+        const result = await solve(payload, {
+          onProgress: (done, total, meta) => callIfCurrent(onProgress, done, total, meta),
+          signal,
+        });
+        callIfCurrent(onDone, result);
+      } catch (err) {
+        callIfCurrent(onError, err);
+      } finally {
+        if (currentJobId === jobId){
+          cleanupMainThreadSolve();
+          activeSolveReject = null;
+        }
+      }
+    };
+
+    void run();
+  }
 
   function buildSolvePayload(){
     const monthKey = state.month;
@@ -3188,53 +3237,79 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
   }
 
   function startSolve(payload, { onProgress, onDone, onError } = {}){
-    if (solverWorker) solverWorker.terminate();
+    cleanupWorker();
+    if (mainThreadAbortController){
+      mainThreadAbortController.abort();
+      cleanupMainThreadSolve();
+    }
 
-    solverWorker = new Worker('./solver-worker.js', { type: 'module' });
     const jobId = ++currentJobId;
 
     const finalize = () => {
-      if (solverWorker){
-        solverWorker.terminate();
-        solverWorker = null;
-      }
+      cleanupWorker();
       activeSolveReject = null;
     };
+
+    const handleProgress = (done, total, meta) => {
+      if (jobId !== currentJobId) return;
+      if (typeof onProgress === 'function'){
+        onProgress(done, total, meta || {});
+      }
+    };
+
+    const handleDone = (result) => {
+      finalize();
+      if (jobId !== currentJobId) return;
+      if (typeof onDone === 'function') onDone(result);
+    };
+
+    const handleError = (err) => {
+      finalize();
+      if (jobId !== currentJobId) return;
+      if (typeof onError === 'function') onError(err);
+    };
+
+    if (isFileOrigin()){
+      runSolveOnMainThread(payload, { onProgress: handleProgress, onDone: handleDone, onError: handleError, jobId });
+      return;
+    }
+
+    try {
+      solverWorker = new Worker('./solver-worker.js', { type: 'module' });
+    } catch (err) {
+      console.warn('Worker konnte nicht gestartet werden, fallback auf Hauptthread.', err);
+      runSolveOnMainThread(payload, { onProgress: handleProgress, onDone: handleDone, onError: handleError, jobId });
+      return;
+    }
 
     solverWorker.onmessage = (e) => {
       const msg = e.data || {};
       if (msg.jobId !== jobId) return;
 
       if (msg.type === 'progress'){
-        if (typeof onProgress === 'function'){
-          onProgress(msg.done, msg.total, msg.meta || {});
-        }
+        handleProgress(msg.done, msg.total, msg.meta);
       } else if (msg.type === 'done'){
-        finalize();
-        if (typeof onDone === 'function') onDone(msg.result);
+        handleDone(msg.result);
       } else if (msg.type === 'error'){
-        finalize();
         const err = new Error(msg.message || 'Unbekannter Fehler');
         if (msg.stack) err.stack = msg.stack;
-        if (typeof onError === 'function') onError(err);
+        handleError(err);
       }
     };
 
     solverWorker.onerror = (err) => {
-      finalize();
-      if (typeof onError === 'function'){
-        const e = err instanceof Error ? err : new Error(String(err));
-        onError(e);
-      }
+      const e = err instanceof Error ? err : new Error(String(err));
+      handleError(e);
     };
 
     solverWorker.postMessage({ jobId, payload });
   }
 
   function cancelSolve(){
-    if (solverWorker){
-      solverWorker.terminate();
-      solverWorker = null;
+    cleanupWorker();
+    if (mainThreadAbortController){
+      mainThreadAbortController.abort();
+      cleanupMainThreadSolve();
     }
     if (typeof activeSolveReject === 'function'){
       const err = new Error('Abgebrochen');
