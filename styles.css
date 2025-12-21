@@ -535,6 +535,16 @@ code{
   background: rgba(255,209,102,.16);
 }
 
+.badge.sv{
+  border-color: rgba(73,209,124,.65);
+  background: rgba(73,209,124,.14);
+}
+
+.badge.team{
+  border-color: rgba(106,167,255,.65);
+  background: rgba(106,167,255,.14);
+}
+
 .badge.off{
   border-color: rgba(154,176,208,.55);
   background: rgba(154,176,208,.12);
@@ -595,6 +605,25 @@ code{
   line-height: 1.2;
 }
 
+.daytag-mark{
+  display:inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px dashed rgba(106,167,255,.55);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.daytag-mark.sv{
+  border-color: rgba(73,209,124,.6);
+  color: rgba(73,209,124,.95);
+}
+
+.daytag-mark.team{
+  border-color: rgba(106,167,255,.7);
+  color: rgba(106,167,255,.95);
+}
+
 .tdreq{
   display: inline-flex;
   gap: 6px;
@@ -603,8 +632,18 @@ code{
   color: var(--text);
 }
 
-.tdreq input{
+.tdreq input,
+.tdreq select{
   transform: translateY(1px);
+}
+
+.duty-select{
+  min-width: 110px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(0,0,0,.2);
+  color: var(--text);
 }
 
 .table tr.row-sunday td,
