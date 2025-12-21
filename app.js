@@ -1321,9 +1321,10 @@ function renderEmployeeList(){
           <td class="sticky-col">${dateHtml}</td>
           <td class="sticky-col2">
             <label class="tdreq">
-              <select class="duty-select" data-action="set-day-duty" data-iso="${escapeHtml(day.iso)}">
+              <input type="checkbox" data-action="set-day-td" data-iso="${escapeHtml(day.iso)}" ${tdReq ? 'checked' : ''} />
+              <span>TD</span>
+              <select class="duty-select" data-action="set-day-special" data-iso="${escapeHtml(day.iso)}">
                 <option value="">–</option>
-                <option value="TD" ${tdReq ? 'selected' : ''}>TD</option>
                 <option value="SV" ${specialDay === SPECIAL_DAY.SV ? 'selected' : ''}>SV</option>
                 <option value="TEAM" ${specialDay === SPECIAL_DAY.TEAM ? 'selected' : ''}>Team</option>
               </select>
@@ -3960,22 +3961,24 @@ blockTableEl.addEventListener('click', (ev) => {
 
   // Pflicht / Sondertag (pro Datum, global)
   blockTableEl.addEventListener('change', (ev) => {
-    const select = ev.target && ev.target.closest ? ev.target.closest('select[data-action="set-day-duty"]') : null;
-    if (!select) return;
+    const tdToggle = ev.target && ev.target.closest ? ev.target.closest('input[data-action="set-day-td"]') : null;
+    const select = ev.target && ev.target.closest ? ev.target.closest('select[data-action="set-day-special"]') : null;
+    if (!tdToggle && !select) return;
 
-    const iso = select.getAttribute('data-iso');
+    const iso = (tdToggle || select).getAttribute('data-iso');
     if (!iso) return;
 
-    const value = select.value || '';
-    if (value === 'TD'){
-      setTdRequired(state.month, iso, true);
-      setSpecialDay(state.month, iso, SPECIAL_DAY.NONE);
-    } else if (value === 'SV' || value === 'TEAM'){
-      setTdRequired(state.month, iso, false);
-      setSpecialDay(state.month, iso, value);
-    } else {
-      setTdRequired(state.month, iso, false);
-      setSpecialDay(state.month, iso, SPECIAL_DAY.NONE);
+    if (tdToggle){
+      setTdRequired(state.month, iso, tdToggle.checked);
+    }
+
+    if (select){
+      const value = select.value || '';
+      if (value === 'SV' || value === 'TEAM'){
+        setSpecialDay(state.month, iso, value);
+      } else {
+        setSpecialDay(state.month, iso, SPECIAL_DAY.NONE);
+      }
     }
 
     // Inputs changed -> Ergebnis für diesen Monat verwerfen
