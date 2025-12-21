@@ -20,6 +20,17 @@
     TD: { key: 'TD', label: 'TD', hours: 10 },
   };
 
+  const SPECIAL_DAY = {
+    NONE: '',
+    SV: 'SV',
+    TEAM: 'TEAM',
+  };
+
+  const SPECIAL_DAY_CONFIG = {
+    [SPECIAL_DAY.SV]: { label: 'SV', offCredit: 3.5, otherCredit: 2 },
+    [SPECIAL_DAY.TEAM]: { label: 'Team', offCredit: 2, otherCredit: 3 },
+  };
+
   const WEEKDAY_SHORT = ['So','Mo','Di','Mi','Do','Fr','Sa']; // JS: 0=So
 
   // ---------- DOM helpers ----------
@@ -264,6 +275,21 @@
     return { ...baseSettings, ...(isPlainObject(value) ? value : {}) };
   }
 
+  function normalizeSpecialDay(value){
+    if (value === SPECIAL_DAY.SV || value === SPECIAL_DAY.TEAM) return value;
+    return SPECIAL_DAY.NONE;
+  }
+
+  function getSpecialDayLabel(value){
+    return SPECIAL_DAY_CONFIG[value]?.label || '';
+  }
+
+  function getSpecialDayCredit(value, { forcedOff } = {}){
+    const config = SPECIAL_DAY_CONFIG[value];
+    if (!config) return 0;
+    return forcedOff ? config.offCredit : config.otherCredit;
+  }
+
   function defaultState(){
     const month = monthKeyFromDate(new Date());
     return {
@@ -272,6 +298,7 @@
       employees: [],
       blocksByMonth: {},
       tdRequiredByMonth: {},
+      specialDayByMonth: {},
       settings: {
         attempts: 10000,
         preferGaps: true,
@@ -559,6 +586,7 @@
         employees: Array.isArray(parsed.employees) ? parsed.employees.map(normalizeEmployee) : [],
         blocksByMonth: safeRecord(parsed.blocksByMonth),
         tdRequiredByMonth: safeRecord(parsed.tdRequiredByMonth),
+        specialDayByMonth: safeRecord(parsed.specialDayByMonth),
         lastResultByMonth: safeRecord(parsed.lastResultByMonth),
       };
 
@@ -665,6 +693,7 @@
       employees: state.employees,
       blocksByMonth: state.blocksByMonth,
       tdRequiredByMonth: state.tdRequiredByMonth,
+      specialDayByMonth: state.specialDayByMonth,
       exportedAt: new Date().toISOString(),
     };
   }
@@ -678,6 +707,7 @@
       employees: Array.isArray(obj.employees) ? obj.employees.map(normalizeEmployee) : [],
       blocksByMonth: safeRecord(obj && obj.blocksByMonth),
       tdRequiredByMonth: safeRecord(obj && obj.tdRequiredByMonth),
+      specialDayByMonth: safeRecord(obj && obj.specialDayByMonth),
       lastResultByMonth: {}, // immer leer, neu generieren
     };
 
@@ -900,6 +930,7 @@
   function ensureMonthStructures(monthKey){
     if (!state.blocksByMonth[monthKey]) state.blocksByMonth[monthKey] = {};
     if (!state.tdRequiredByMonth[monthKey]) state.tdRequiredByMonth[monthKey] = {};
+    if (!state.specialDayByMonth[monthKey]) state.specialDayByMonth[monthKey] = {};
     if (!state.lastResultByMonth[monthKey]) state.lastResultByMonth[monthKey] = null;
   }
 
@@ -955,6 +986,24 @@
       delete m[isoDate];
     } else {
       m[isoDate] = true;
+    }
+  }
+
+  // ---------- Sondertag (SV/Team) ----------
+  function getSpecialDay(monthKey, isoDate){
+    const m = state.specialDayByMonth && state.specialDayByMonth[monthKey];
+    if (!m) return SPECIAL_DAY.NONE;
+    return normalizeSpecialDay(m[isoDate]);
+  }
+
+  function setSpecialDay(monthKey, isoDate, value){
+    ensureMonthStructures(monthKey);
+    const m = state.specialDayByMonth[monthKey];
+    const next = normalizeSpecialDay(value);
+    if (!next){
+      delete m[isoDate];
+    } else {
+      m[isoDate] = next;
     }
   }
 
@@ -1050,7 +1099,7 @@
     }[ch]));
   }
 
-  function renderDateCellHtml(day, { isHoliday = false, isSunday = false, holidayName = '', tdReq = false } = {}){
+  function renderDateCellHtml(day, { isHoliday = false, isSunday = false, holidayName = '', tdReq = false, specialDay = SPECIAL_DAY.NONE } = {}){
     const dd = pad2(day.date.getDate());
     const mm = pad2(day.date.getMonth() + 1);
     const yyyy = day.date.getFullYear();
@@ -1058,6 +1107,10 @@
     const numCls = isHoliday ? 'date-num holiday' : (isSunday ? 'date-num sunday' : 'date-num');
     const title = holidayName ? `title="${escapeHtml(holidayName)}"` : '';
     const tdMark = tdReq ? `<span class="tdreq-mark" title="TD an diesem Tag ist verpflichtend">TD!</span>` : '';
+    const specialLabel = getSpecialDayLabel(specialDay);
+    const specialMark = specialLabel
+      ? `<span class="daytag-mark ${specialDay.toLowerCase()}">${escapeHtml(specialLabel)}</span>`
+      : '';
 
     return `
       <div class="datecell">
@@ -1066,6 +1119,7 @@
         <span class="date-mm">${mm}</span><span class="date-sep">.</span>
         <span class="date-yy">${yyyy}</span>
         ${tdMark}
+        ${specialMark}
       </div>
     `.trim();
   }
@@ -1226,7 +1280,7 @@ function renderEmployeeList(){
       <thead>
         <tr>
           <th class="sticky-col" style="min-width: 170px;">Datum</th>
-          <th class="sticky-col2" style="min-width: 92px;">TD Pflicht</th>
+          <th class="sticky-col2" style="min-width: 130px;">Pflicht</th>
           ${state.employees.map(emp => `<th style="min-width: 220px;">${escapeHtml(emp.name)}</th>`).join('')}
         </tr>
       </thead>
@@ -1237,10 +1291,11 @@ function renderEmployeeList(){
       const isHoliday = Boolean(holidayName);
       const isSunday = (day.dow === 0);
       const tdReq = getTdRequired(monthKey, day.iso);
+      const specialDay = getSpecialDay(monthKey, day.iso);
 
       const rowCls = [isSunday ? 'row-sunday' : '', isHoliday ? 'row-holiday' : ''].filter(Boolean).join(' ');
 
-      const dateHtml = renderDateCellHtml(day, { isHoliday, isSunday, holidayName, tdReq });
+      const dateHtml = renderDateCellHtml(day, { isHoliday, isSunday, holidayName, tdReq, specialDay });
       const cells = state.employees.map(emp => {
         const st = getBlock(monthKey, emp.id, day.iso);
 
@@ -1266,8 +1321,12 @@ function renderEmployeeList(){
           <td class="sticky-col">${dateHtml}</td>
           <td class="sticky-col2">
             <label class="tdreq">
-              <input type="checkbox" data-action="toggle-td-required" data-iso="${escapeHtml(day.iso)}" ${tdReq ? 'checked' : ''} />
-              <span>TD</span>
+              <select class="duty-select" data-action="set-day-duty" data-iso="${escapeHtml(day.iso)}">
+                <option value="">–</option>
+                <option value="TD" ${tdReq ? 'selected' : ''}>TD</option>
+                <option value="SV" ${specialDay === SPECIAL_DAY.SV ? 'selected' : ''}>SV</option>
+                <option value="TEAM" ${specialDay === SPECIAL_DAY.TEAM ? 'selected' : ''}>Team</option>
+              </select>
             </label>
           </td>
           ${cells}
@@ -1339,29 +1398,29 @@ function renderEmployeeList(){
 
     const blk = getBlock(monthKey, empId, day.iso);
     const forced = res.forcedOff && res.forcedOff[empId] && res.forcedOff[empId][dayIdx];
+    const specialDay = getSpecialDay(monthKey, day.iso);
+    const specialLabel = getSpecialDayLabel(specialDay);
+    const isVacation = blk === BLOCK.FREEH;
+
+    const badges = [];
     if (forced){
-      const badges = [`<span class="badge off">/</span>`];
-      if (blk === BLOCK.FREE0) badges.push(`<span class="badge free0">Frei</span>`);
-      if (blk === BLOCK.WF) badges.push(`<span class="badge wf">WF</span>`);
-      if (blk === BLOCK.FREEH){
-        const emp = res.empById[empId];
-        const credit = (emp && isWeekday(day.date)) ? round1(emp.weeklyHours / 5) : 0;
-        const extra = (credit > 0) ? ` +${credit}h` : '';
-        badges.push(`<span class="badge freeh">Urlaub${extra}</span>`);
-      }
-      return badges.join(' ');
+      badges.push(`<span class="badge off">/</span>`);
     }
 
-    if (blk === BLOCK.FREE0) return `<span class="badge free0">Frei</span>`;
-    if (blk === BLOCK.WF) return `<span class="badge wf">WF</span>`;
+    if (blk === BLOCK.FREE0) badges.push(`<span class="badge free0">Frei</span>`);
+    if (blk === BLOCK.WF) badges.push(`<span class="badge wf">WF</span>`);
     if (blk === BLOCK.FREEH){
       const emp = res.empById[empId];
       const credit = (emp && isWeekday(day.date)) ? round1(emp.weeklyHours / 5) : 0;
       const extra = (credit > 0) ? ` +${credit}h` : '';
-      return `<span class="badge freeh">Urlaub${extra}</span>`;
+      badges.push(`<span class="badge freeh">Urlaub${extra}</span>`);
     }
 
-    return '';
+    if (specialLabel && !isVacation){
+      badges.push(`<span class="badge ${specialDay.toLowerCase()}">${escapeHtml(specialLabel)}</span>`);
+    }
+
+    return badges.join(' ');
   }
 
   function renderPlanTable(res){
@@ -1388,9 +1447,10 @@ function renderEmployeeList(){
       const isHoliday = Boolean(holidayName);
       const isSunday = (day.dow === 0);
       const tdReq = getTdRequired(monthKey, day.iso);
+      const specialDay = getSpecialDay(monthKey, day.iso);
 
       const rowCls = [isSunday ? 'row-sunday' : '', isHoliday ? 'row-holiday' : ''].filter(Boolean).join(' ');
-      const dateHtml = renderDateCellHtml(day, { isHoliday, isSunday, holidayName, tdReq });
+      const dateHtml = renderDateCellHtml(day, { isHoliday, isSunday, holidayName, tdReq, specialDay });
 
       const cells = employees.map(emp => `<td>${buildPlanCell(res, emp.id, idx)}</td>`).join('');
       return `
@@ -1693,6 +1753,11 @@ function renderEmployeeList(){
       tdRequiredByDay[i] = getTdRequired(monthKey, days[i].iso);
     }
 
+    const specialDayByDay = Array(N).fill(SPECIAL_DAY.NONE);
+    for (let i = 0; i < N; i++){
+      specialDayByDay[i] = getSpecialDay(monthKey, days[i].iso);
+    }
+
     return {
       monthKey,
       days,
@@ -1704,6 +1769,7 @@ function renderEmployeeList(){
       empDataById,
       segRequiredTotal,
       tdRequiredByDay,
+      specialDayByDay,
     };
   }
 
@@ -2368,7 +2434,7 @@ function renderEmployeeList(){
         targetHours: round1(ed ? ed.monthDesiredTarget : 0),
         contractTargetHours: round1(ed ? ed.monthContractTarget : 0),
         desiredTargetHours: round1(ed ? ed.monthDesiredTarget : 0),
-        creditHours: round1(ed ? ed.monthCredit : 0),
+        creditHours: ed ? ed.monthCredit : 0,
         iwdCount: 0,
         tdCount: 0,
         workHours: 0,
@@ -2394,10 +2460,22 @@ function renderEmployeeList(){
         summary[tdEmp].tdCount += 1;
         summary[tdEmp].workHours += SHIFT.TD.hours;
       }
+
+      const specialDay = ctx.specialDayByDay ? ctx.specialDayByDay[i] : SPECIAL_DAY.NONE;
+      if (specialDay){
+        for (const emp of ctx.employees){
+          if (schedule.iwd[i] === emp.id || schedule.td[i] === emp.id) continue;
+          const ed = ctx.empDataById[emp.id];
+          if (ed && ed.blockByDay && ed.blockByDay[i] === BLOCK.FREEH) continue;
+          const isForced = Boolean(forcedOff && forcedOff[emp.id] && forcedOff[emp.id][i]);
+          summary[emp.id].creditHours += getSpecialDayCredit(specialDay, { forcedOff: isForced });
+        }
+      }
     }
 
     for (const emp of ctx.employees){
       const row = summary[emp.id];
+      row.creditHours = round1(row.creditHours);
       row.workHours = round1(row.workHours);
       row.totalHours = round1(row.workHours + row.creditHours);
       row.deltaContract = round1(row.totalHours - row.contractTargetHours);
@@ -2770,6 +2848,16 @@ function buildScheduleAttempt({ monthKey, days, segments, employees, settings })
     return { schedule, forcedOff };
   }
 
+  function getSpecialDayCreditForEmployee({ monthKey, day, dayIdx, empId, schedule, forcedOff }){
+    const specialDay = getSpecialDay(monthKey, day.iso);
+    if (!specialDay) return 0;
+    if (schedule.iwd[dayIdx] === empId || schedule.td[dayIdx] === empId) return 0;
+    const blk = getBlock(monthKey, empId, day.iso);
+    if (blk === BLOCK.FREEH) return 0;
+    const isForced = Boolean(forcedOff && forcedOff[empId] && forcedOff[empId][dayIdx]);
+    return getSpecialDayCredit(specialDay, { forcedOff: isForced });
+  }
+
 
   
 function evaluateAttempt({ monthKey, days, segments, employees, schedule, forcedOff }){
@@ -2821,6 +2909,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
 
         let credit = 0;
         let work = 0;
+        let specialCredit = 0;
 
         for (const dayIdx of segIndices){
           const day = days[dayIdx];
@@ -2832,11 +2921,20 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
             const blk = getBlock(monthKey, emp.id, day.iso);
             if (blk === BLOCK.FREEH) credit += perWeekday;
           }
+
+          specialCredit += getSpecialDayCreditForEmployee({
+            monthKey,
+            day,
+            dayIdx,
+            empId: emp.id,
+            schedule,
+            forcedOff,
+          });
         }
 
         credit = Math.min(credit, target);
 
-        const total = work + credit;
+        const total = work + credit + specialCredit;
         const delta = total - target;
 
         // Ziel: nah an 0. Überstunden etwas teurer als Minus, weil Meetings/Supervision nicht geplant.
@@ -2845,7 +2943,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
     }
 
     // --- Monatsstunden (stark gewichtet) ---
-    const monthSummaryObj = buildMonthSummary({ monthKey, days, segments, employees, schedule });
+    const monthSummaryObj = buildMonthSummary({ monthKey, days, segments, employees, schedule, forcedOff });
     const monthSummaryByEmpId = monthSummaryObj.summaryByEmpId;
 
     let maxDelta = -Infinity;
@@ -2919,7 +3017,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
   }
 
 
-  function buildMonthSummary({ monthKey, days, segments, employees, schedule }){
+  function buildMonthSummary({ monthKey, days, segments, employees, schedule, forcedOff }){
     const empById = Object.fromEntries(employees.map(e => [e.id, e]));
 
     const summary = {};
@@ -2959,12 +3057,18 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
       }
 
       // credit
-      if (isWeekday(day.date)){
-        for (const emp of employees){
-          const blk = getBlock(monthKey, emp.id, day.iso);
-          if (blk === BLOCK.FREEH){
-            summary[emp.id].creditHours += (emp.weeklyHours / 5);
-          }
+      const specialDay = getSpecialDay(monthKey, day.iso);
+      for (const emp of employees){
+        const blk = getBlock(monthKey, emp.id, day.iso);
+        if (isWeekday(day.date) && blk === BLOCK.FREEH){
+          summary[emp.id].creditHours += (emp.weeklyHours / 5);
+        }
+
+        if (specialDay){
+          if (schedule.iwd[i] === emp.id || schedule.td[i] === emp.id) continue;
+          if (blk === BLOCK.FREEH) continue;
+          const isForced = Boolean(forcedOff && forcedOff[emp.id] && forcedOff[emp.id][i]);
+          summary[emp.id].creditHours += getSpecialDayCredit(specialDay, { forcedOff: isForced });
         }
       }
     }
@@ -3571,6 +3675,7 @@ self.onmessage = async (e) => {
 
     const blocksByEmpId = state.blocksByMonth[monthKey] || {};
     const tdRequiredByDay = days.map(day => Boolean(getTdRequired(monthKey, day.iso)));
+    const specialDayByDay = days.map(day => getSpecialDay(monthKey, day.iso));
 
     return {
       monthKey,
@@ -3580,6 +3685,7 @@ self.onmessage = async (e) => {
       settings,
       blocksByEmpId,
       tdRequiredByDay,
+      specialDayByDay,
     };
   }
 
@@ -3852,15 +3958,25 @@ blockTableEl.addEventListener('click', (ev) => {
     renderAll();
   });
 
-  // TD Pflicht Checkbox (pro Datum, global)
+  // Pflicht / Sondertag (pro Datum, global)
   blockTableEl.addEventListener('change', (ev) => {
-    const cb = ev.target && ev.target.closest ? ev.target.closest('input[data-action="toggle-td-required"]') : null;
-    if (!cb) return;
+    const select = ev.target && ev.target.closest ? ev.target.closest('select[data-action="set-day-duty"]') : null;
+    if (!select) return;
 
-    const iso = cb.getAttribute('data-iso');
+    const iso = select.getAttribute('data-iso');
     if (!iso) return;
 
-    setTdRequired(state.month, iso, Boolean(cb.checked));
+    const value = select.value || '';
+    if (value === 'TD'){
+      setTdRequired(state.month, iso, true);
+      setSpecialDay(state.month, iso, SPECIAL_DAY.NONE);
+    } else if (value === 'SV' || value === 'TEAM'){
+      setTdRequired(state.month, iso, false);
+      setSpecialDay(state.month, iso, value);
+    } else {
+      setTdRequired(state.month, iso, false);
+      setSpecialDay(state.month, iso, SPECIAL_DAY.NONE);
+    }
 
     // Inputs changed -> Ergebnis für diesen Monat verwerfen
     state.lastResultByMonth[state.month] = null;
@@ -3974,6 +4090,7 @@ blockTableEl.addEventListener('click', (ev) => {
         employees: obj.employees.map(normalizeEmployee),
         blocksByMonth: safeRecord(obj.blocksByMonth),
         tdRequiredByMonth: safeRecord(obj.tdRequiredByMonth),
+        specialDayByMonth: safeRecord(obj.specialDayByMonth),
         lastResultByMonth: safeRecord(obj.lastResultByMonth),
       };
 

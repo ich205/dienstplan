@@ -10,12 +10,34 @@ const SHIFT = {
   TD: { key: 'TD', label: 'TD', hours: 10 },
 };
 
+const SPECIAL_DAY = {
+  NONE: '',
+  SV: 'SV',
+  TEAM: 'TEAM',
+};
+
+const SPECIAL_DAY_CONFIG = {
+  [SPECIAL_DAY.SV]: { offCredit: 3.5, otherCredit: 2 },
+  [SPECIAL_DAY.TEAM]: { offCredit: 2, otherCredit: 3 },
+};
+
 function clamp(n, min, max){
   return Math.max(min, Math.min(max, n));
 }
 
 function round1(n){
   return Math.round(n * 10) / 10;
+}
+
+function normalizeSpecialDay(value){
+  if (value === SPECIAL_DAY.SV || value === SPECIAL_DAY.TEAM) return value;
+  return SPECIAL_DAY.NONE;
+}
+
+function getSpecialDayCredit(value, { forcedOff } = {}){
+  const config = SPECIAL_DAY_CONFIG[value];
+  if (!config) return 0;
+  return forcedOff ? config.offCredit : config.otherCredit;
 }
 
 function defaultEmpPrefs(){
@@ -108,7 +130,7 @@ function getBlockFromMap(blocksByEmpId, empId, isoDate){
   return blocksByEmpId[empId][isoDate] || BLOCK.NONE;
 }
 
-function buildMonthContext({ monthKey, days, segments, employees, settings, blocksByEmpId, tdRequiredByDay }){
+function buildMonthContext({ monthKey, days, segments, employees, settings, blocksByEmpId, tdRequiredByDay, specialDayByDay }){
   const N = days.length;
   const segIdByDay = Array(N).fill(0);
   segments.forEach((seg, si) => {
@@ -193,6 +215,9 @@ function buildMonthContext({ monthKey, days, segments, employees, settings, bloc
   const resolvedTdRequiredByDay = Array.isArray(tdRequiredByDay)
     ? tdRequiredByDay.slice(0, N).map(Boolean)
     : Array(N).fill(false);
+  const resolvedSpecialDayByDay = Array.isArray(specialDayByDay)
+    ? specialDayByDay.slice(0, N).map(normalizeSpecialDay)
+    : Array(N).fill(SPECIAL_DAY.NONE);
 
   return {
     monthKey,
@@ -205,6 +230,7 @@ function buildMonthContext({ monthKey, days, segments, employees, settings, bloc
     empDataById,
     segRequiredTotal,
     tdRequiredByDay: resolvedTdRequiredByDay,
+    specialDayByDay: resolvedSpecialDayByDay,
   };
 }
 
@@ -688,16 +714,27 @@ function evaluateAttemptCtx(ctx, attempt){
       let work = 0;
       let iwdC = 0;
       let tdC = 0;
+      let specialCredit = 0;
 
       for (const dayIdx of segIndices){
         if (schedule.iwd[dayIdx] === emp.id){ work += SHIFT.IWD.hours; iwdC++; }
         if (schedule.td[dayIdx] === emp.id){ work += SHIFT.TD.hours; tdC++; }
+
+        const specialDay = ctx.specialDayByDay ? ctx.specialDayByDay[dayIdx] : SPECIAL_DAY.NONE;
+        if (specialDay){
+          if (schedule.iwd[dayIdx] !== emp.id && schedule.td[dayIdx] !== emp.id){
+            if (ed.blockByDay[dayIdx] !== BLOCK.FREEH){
+              const isForced = Boolean(forcedOff && forcedOff[emp.id] && forcedOff[emp.id][dayIdx]);
+              specialCredit += getSpecialDayCredit(specialDay, { forcedOff: isForced });
+            }
+          }
+        }
       }
 
       weekIwd[emp.id] = iwdC;
       weekTd[emp.id] = tdC;
 
-      const total = work + credit;
+      const total = work + credit + specialCredit;
       const delta = total - target;
 
       cost += Math.abs(delta) * 50 + (delta > 0 ? delta * 25 : 0);
@@ -730,6 +767,23 @@ function evaluateAttemptCtx(ctx, attempt){
     }
   }
 
+  const specialCreditByEmp = {};
+  for (const emp of ctx.employees){
+    specialCreditByEmp[emp.id] = 0;
+  }
+
+  for (let i = 0; i < N; i++){
+    const specialDay = ctx.specialDayByDay ? ctx.specialDayByDay[i] : SPECIAL_DAY.NONE;
+    if (!specialDay) continue;
+    for (const emp of ctx.employees){
+      if (schedule.iwd[i] === emp.id || schedule.td[i] === emp.id) continue;
+      const ed = ctx.empDataById[emp.id];
+      if (ed && ed.blockByDay[i] === BLOCK.FREEH) continue;
+      const isForced = Boolean(forcedOff && forcedOff[emp.id] && forcedOff[emp.id][i]);
+      specialCreditByEmp[emp.id] += getSpecialDayCredit(specialDay, { forcedOff: isForced });
+    }
+  }
+
   let maxDelta = -Infinity;
   let minDelta = Infinity;
 
@@ -737,7 +791,9 @@ function evaluateAttemptCtx(ctx, attempt){
     const ed = ctx.empDataById[emp.id];
     if (!ed) { cost += 1_000_000; continue; }
 
-    const total = (workHours[emp.id] || 0) + (ed.monthCredit || 0);
+    const total = (workHours[emp.id] || 0)
+      + (ed.monthCredit || 0)
+      + (specialCreditByEmp[emp.id] || 0);
     const delta = total - (ed.monthDesiredTarget || 0);
     maxDelta = Math.max(maxDelta, delta);
     minDelta = Math.min(minDelta, delta);
@@ -824,7 +880,7 @@ function buildMonthSummaryCtx(ctx, schedule, forcedOff){
       targetHours: round1(ed ? ed.monthDesiredTarget : 0),
       contractTargetHours: round1(ed ? ed.monthContractTarget : 0),
       desiredTargetHours: round1(ed ? ed.monthDesiredTarget : 0),
-      creditHours: round1(ed ? ed.monthCredit : 0),
+      creditHours: ed ? ed.monthCredit : 0,
       iwdCount: 0,
       tdCount: 0,
       workHours: 0,
@@ -850,10 +906,22 @@ function buildMonthSummaryCtx(ctx, schedule, forcedOff){
       summary[tdEmp].tdCount += 1;
       summary[tdEmp].workHours += SHIFT.TD.hours;
     }
+
+    const specialDay = ctx.specialDayByDay ? ctx.specialDayByDay[i] : SPECIAL_DAY.NONE;
+    if (specialDay){
+      for (const emp of ctx.employees){
+        if (schedule.iwd[i] === emp.id || schedule.td[i] === emp.id) continue;
+        const ed = ctx.empDataById[emp.id];
+        if (ed && ed.blockByDay && ed.blockByDay[i] === BLOCK.FREEH) continue;
+        const isForced = Boolean(forcedOff && forcedOff[emp.id] && forcedOff[emp.id][i]);
+        summary[emp.id].creditHours += getSpecialDayCredit(specialDay, { forcedOff: isForced });
+      }
+    }
   }
 
   for (const emp of ctx.employees){
     const row = summary[emp.id];
+    row.creditHours = round1(row.creditHours);
     row.workHours = round1(row.workHours);
     row.totalHours = round1(row.workHours + row.creditHours);
     row.deltaContract = round1(row.totalHours - row.contractTargetHours);
@@ -915,7 +983,7 @@ function throwIfAborted(signal, shouldCancel){
 }
 
 async function solve(payload, { onProgress, signal, shouldCancel } = {}){
-  const { monthKey, days, segments, employees, settings, blocksByEmpId, tdRequiredByDay } = payload || {};
+  const { monthKey, days, segments, employees, settings, blocksByEmpId, tdRequiredByDay, specialDayByDay } = payload || {};
 
   if (!monthKey || !Array.isArray(days) || !Array.isArray(segments) || !Array.isArray(employees)){
     throw new Error('Ungültige Solver-Daten.');
@@ -931,6 +999,7 @@ async function solve(payload, { onProgress, signal, shouldCancel } = {}){
     settings: settings || {},
     blocksByEmpId: blocksByEmpId || {},
     tdRequiredByDay: tdRequiredByDay || [],
+    specialDayByDay: specialDayByDay || [],
   });
 
   const messages = [];
