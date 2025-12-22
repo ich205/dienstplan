@@ -22,8 +22,11 @@
   <main class="wrap">
     <div class="page-grid">
       <!-- Sidebar -->
-      <details class="sidebar-shell" open>
-        <summary>Navigation & Einstellungen</summary>
+      <details class="sidebar-shell" id="sidebarShell" open>
+        <summary>
+          <span class="summary-full">Navigation & Einstellungen</span>
+          <span class="summary-compact">Menü</span>
+        </summary>
         <div class="sidebar">
         <section class="card" id="blockCard">
           <h2>Monat & Einstellungen</h2>
@@ -34,7 +37,7 @@
               <input id="monthSelect" type="month" />
             </label>
 
-            <label class="field">
+            <label class="field span-full">
               <span>Qualität (Versuche)</span>
               <select id="attemptsInput">
                 <option value="10000">10.000 (ca. 0,9s)</option>
@@ -67,7 +70,7 @@
               </select>
             </label>
 
-            <label class="field">
+            <label class="field span-full">
               <span>Scroll-Modus</span>
               <select id="scrollModeSelect">
                 <option value="page">Seite (Standard)</option>
@@ -225,6 +228,9 @@
 
         <section class="card" id="planSection">
           <h2 class="screen-only">Dienstplan</h2>
+          <div class="fullscreen-actions" aria-live="polite">
+            <button class="btn" id="exitFullscreenBtn" type="button">Vollbild beenden</button>
+          </div>
           <div id="messages" aria-live="polite"></div>
 
           <div class="table-scroll">
