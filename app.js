@@ -615,6 +615,8 @@
       state.settings.viewMode = normalizeViewMode(state.settings.viewMode);
       state.settings.scrollMode = normalizeScrollMode(state.settings.scrollMode);
       state.settings.fullscreenPlan = Boolean(state.settings.fullscreenPlan);
+      // Vollbildmodus nicht persistent halten, damit Übersichten nicht dauerhaft verschwinden.
+      state.settings.fullscreenPlan = false;
 
       return state;
     }catch(e){
