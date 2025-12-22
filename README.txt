@@ -1,4 +1,4 @@
-Dienstplan Generator (Offline, Monat) – Version 4.3
+Dienstplan Generator (Offline, Monat) – Version 4.4
 
 Start
 - ZIP entpacken
@@ -24,6 +24,12 @@ Neu in Version 4.3
 - Deutlich stärkere Hervorhebung von Sonntagen/Feiertagen im Druck.
 - Druck-Layout: Plan-Tabelle auf Seite 1, Stundenübersicht startet immer auf Seite 2.
 - Platzsparender Druck: Titel wird im Kopf der Tabelle angezeigt ("Dienstplan – <Monat>") statt als extra Überschrift.
+
+Neu in Version 4.4 (UI/UX)
+- Dienstplan mit „Freeze Panes“: Kopfzeile + erste Spalte bleiben sichtbar.
+- Neue Ansichtsauswahl: Normal / Kompakt / Fit-to-screen (empfohlen: Fit + optional Vollbild).
+- Scroll-Modus: Seite (Standard) oder Container (alte Scroll-Boxen).
+- Vollbild-Dienstplan blendet das Seitenpanel aus und schafft Platz.
 
 Was kann das Tool?
 1) Mitarbeiter verwalten
