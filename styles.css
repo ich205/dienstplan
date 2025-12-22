@@ -1,6 +1,8 @@
 :root{
   --bg: #0b0f17;
   --card: #121a26;
+  --panel: rgba(18,26,38,.96);
+  --panel-strong: rgba(18,26,38,.98);
   --text: #e7eefc;
   --muted: #9ab0d0;
   --border: rgba(255,255,255,.12);
@@ -9,6 +11,15 @@
   --ok: #49d17c;
   --warn: #ffd166;
   --date-col-width: 170px;
+  --plan-date-col-width: 170px;
+  --plan-col-min: 180px;
+  --plan-col-width: 180px;
+  --plan-cell-pad: 10px;
+  --plan-font-size: 13px;
+  --plan-header-font-size: 12px;
+  --row-hover-bg: rgba(255,255,255,.06);
+  --col-hover-bg: rgba(106,167,255,.08);
+  --sticky-top: 72px;
 }
 
 *{ box-sizing: border-box; }
@@ -61,6 +72,17 @@ html, body{
   font-size: 18px;
 }
 
+.card-title{
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.divider{
+  height: 1px;
+  background: var(--border);
+  margin: 14px 0;
+}
+
 .card h3{
   margin: 14px 0 10px 0;
   font-size: 16px;
@@ -101,6 +123,15 @@ input[type="text"], input[type="number"], input[type="date"], select{
   outline: none;
 }
 
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+.btn:focus-visible,
+summary:focus-visible{
+  outline: 2px solid rgba(106,167,255,.7);
+  outline-offset: 2px;
+}
+
 select{
   padding: 8px 8px;
 }
@@ -123,6 +154,11 @@ input::placeholder{
   border-radius: 10px;
   background: rgba(255,255,255,.03);
   color: var(--text);
+}
+
+.checkbox input[type="checkbox"]{
+  width: 18px;
+  height: 18px;
 }
 
 .checkbox span{
@@ -204,7 +240,8 @@ input::placeholder{
 }
 
 .table-scroll{
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: visible;
   border-radius: 12px;
   border: 1px solid var(--border);
   background: rgba(255,255,255,.02);
@@ -212,7 +249,8 @@ input::placeholder{
 
 .table{
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   min-width: 600px;
 }
 
@@ -227,8 +265,8 @@ input::placeholder{
   font-size: 12px;
   color: var(--muted);
   position: sticky;
-  top: 0;
-  background: rgba(18,26,38,.96);
+  top: var(--sticky-top);
+  background: var(--panel);
   z-index: 1;
 }
 
@@ -325,14 +363,19 @@ code{
 
 @media print{
   @page{ size: A4 landscape; margin: 8mm; }
-  :root{ --bg: #fff; --card: #fff; --text: #000; --muted:#222; --border: rgba(0,0,0,.25); }
+  :root{ --bg: #fff; --card: #fff; --text: #000; --muted:#222; --border: rgba(0,0,0,.25); --sticky-top: 0px; }
   body{ background: #fff; color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .wrap{ max-width: none !important; padding: 0 !important; }
   .page-grid{ grid-template-columns: 1fr !important; }
   .app-header{ display:none !important; }
-  .sidebar{ display:none !important; }
+  .sidebar,
+  .sidebar-shell{ display:none !important; }
   #blockCard, #hoursCard, #blocklistMainCard, #messages, .footer{ display:none !important; }
   .btn, .hint, details.info{ display:none !important; }
+  details{ display:block !important; }
+  details > summary{ display:none !important; }
+  details:not([open]) > *{ display:block !important; }
+  body.fullscreen-plan #hoursSection{ display:block !important; }
 
   .card{ border: 1px solid rgba(0,0,0,.25); background: #fff; margin: 0 0 8px 0 !important; padding: 8px !important; border-radius: 0 !important; }
 
@@ -341,7 +384,7 @@ code{
 
   /* Show full table on paper */
   .table-scroll{ overflow: visible !important; max-height: none !important; border: 1px solid rgba(0,0,0,.25); }
-  .table{ min-width: 0 !important; }
+  .table{ min-width: 0 !important; border-collapse: collapse !important; }
   .table th{ background: #f2f2f2; color:#333; position: static !important; }
   .table .sticky-col, .table .sticky-col2{ position: static !important; }
   .table th, .table td{ border-color: rgba(0,0,0,.45) !important; }
@@ -414,6 +457,35 @@ code{
   grid-template-columns: 1fr;
   gap: 16px;
   align-items: start;
+  grid-template-areas: "sidebar" "main";
+}
+
+.sidebar-shell{
+  grid-area: sidebar;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(18,26,38,.65);
+  padding: 6px;
+}
+
+.sidebar-shell > summary{
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 700;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255,255,255,.04);
+}
+
+.sidebar-shell[open] > summary{
+  margin-bottom: 8px;
+}
+
+.sidebar{
+  padding: 0 6px 6px 6px;
 }
 
 .sidebar .card:first-child{ margin-top: 0; }
@@ -421,20 +493,46 @@ code{
 
 @media (min-width: 1100px){
   .page-grid{
-    grid-template-columns: 420px 1fr;
+    grid-template-columns: minmax(320px, 420px) 1fr;
+    grid-template-areas: "sidebar main";
   }
-  .sidebar{
+  .sidebar-shell{
     position: sticky;
     top: 84px; /* below header */
     align-self: start;
-  }
-  .sidebar{
     max-height: calc(100vh - 110px);
     overflow: auto;
-    padding-right: 6px;
   }
-  .sidebar::-webkit-scrollbar{ width: 10px; }
-  .sidebar::-webkit-scrollbar-thumb{ background: rgba(255,255,255,.10); border-radius: 999px; }
+  .sidebar-shell > summary{
+    display: none;
+  }
+  .sidebar-shell::-webkit-scrollbar{ width: 10px; }
+  .sidebar-shell::-webkit-scrollbar-thumb{ background: rgba(255,255,255,.10); border-radius: 999px; }
+}
+
+.main{
+  grid-area: main;
+}
+
+@media (max-width: 1099px){
+  .sidebar-shell{
+    position: relative;
+  }
+}
+
+body.fullscreen-plan .sidebar-shell{
+  display: none;
+}
+
+body.fullscreen-plan .page-grid{
+  grid-template-columns: 1fr;
+  grid-template-areas: "main";
+}
+
+body.fullscreen-plan #blocklistMainCard,
+body.fullscreen-plan #hoursSection,
+body.fullscreen-plan .footer{
+  display: none;
 }
 
 /* ---- Card head / legend ---- */
@@ -457,7 +555,7 @@ code{
 .table .sticky-col{
   position: sticky;
   left: 0;
-  background: rgba(18,26,38,.98);
+  background: var(--panel-strong);
   z-index: 2;
   width: var(--date-col-width);
 }
@@ -470,7 +568,7 @@ code{
 .table .sticky-col2{
   position: sticky;
   left: var(--date-col-width); /* sollte zur Datum-Spaltenbreite passen */
-  background: rgba(18,26,38,.98);
+  background: var(--panel-strong);
   z-index: 2;
 }
 
@@ -668,12 +766,27 @@ code{
 
 /* ---- Make the big month tables use the viewport better ---- */
 .table-scroll{
-  max-height: 70vh;
+  max-height: none;
 }
 @media (min-width: 1100px){
   .table-scroll{
+    max-height: none;
+  }
+}
+
+body.scroll-containers .table-scroll{
+  overflow: auto;
+  max-height: 70vh;
+}
+
+@media (min-width: 1100px){
+  body.scroll-containers .table-scroll{
     max-height: 78vh;
   }
+}
+
+body.scroll-containers{
+  --sticky-top: 0px;
 }
 
 .smallbtn{ padding: 6px 10px; font-size: 12px; }
@@ -878,6 +991,110 @@ code{
   border-color: rgba(255,107,107,.45);
   background: rgba(255,107,107,.12);
   color: #ff6b6b;
+}
+
+/* ---- Details / cards ---- */
+.card-details > summary{
+  list-style: none;
+  font-size: 18px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 4px 0 12px 0;
+}
+
+.card-details > summary::-webkit-details-marker{
+  display: none;
+}
+
+.card-details:not([open]) > summary{
+  padding-bottom: 4px;
+}
+
+.card-details[open] > summary{
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  margin-bottom: 12px;
+}
+
+/* ---- Plan table sizing ---- */
+.plan-table th,
+.plan-table td{
+  padding: var(--plan-cell-pad);
+  font-size: var(--plan-font-size);
+}
+
+.plan-table th{
+  font-size: var(--plan-header-font-size);
+}
+
+.plan-table th.sticky-col,
+.plan-table td.sticky-col{
+  width: var(--plan-date-col-width);
+  min-width: var(--plan-date-col-width);
+}
+
+.plan-table th:not(.sticky-col),
+.plan-table td:not(.sticky-col){
+  min-width: var(--plan-col-min);
+}
+
+.view-fit .plan-table{
+  table-layout: fixed;
+  width: 100%;
+}
+
+.view-fit .plan-table th:not(.sticky-col),
+.view-fit .plan-table td:not(.sticky-col){
+  width: var(--plan-col-width);
+}
+
+.plan-table thead th{
+  position: sticky;
+  top: var(--sticky-top);
+  z-index: 3;
+  background: var(--panel);
+}
+
+.plan-table thead th.sticky-col{
+  left: 0;
+  z-index: 6;
+  background: var(--panel-strong);
+}
+
+.plan-table tbody td.sticky-col{
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  background: var(--panel-strong);
+}
+
+.plan-table tfoot th.sticky-col{
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  background: var(--panel-strong);
+}
+
+.plan-table .row-hover td,
+.plan-table .row-hover th{
+  background: var(--row-hover-bg);
+}
+
+.plan-table .col-hover{
+  background: var(--col-hover-bg);
+}
+
+body.view-compact{
+  --plan-cell-pad: 6px;
+  --plan-font-size: 12px;
+  --plan-header-font-size: 11px;
+  --plan-col-min: 140px;
+  --plan-date-col-width: 150px;
+}
+
+body.view-fit{
+  --plan-cell-pad: 6px;
+  --plan-font-size: 11px;
+  --plan-header-font-size: 10px;
 }
 
 

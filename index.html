@@ -22,7 +22,9 @@
   <main class="wrap">
     <div class="page-grid">
       <!-- Sidebar -->
-      <div class="sidebar">
+      <details class="sidebar-shell" open>
+        <summary>Navigation & Einstellungen</summary>
+        <div class="sidebar">
         <section class="card" id="blockCard">
           <h2>Monat & Einstellungen</h2>
 
@@ -52,6 +54,31 @@
             <input type="checkbox" id="preferGaps" />
             <span>Freitage bevorzugen (große Abstände)</span>
           </label>
+
+          <div class="divider"></div>
+
+          <div class="grid-2">
+            <label class="field">
+              <span>Ansicht</span>
+              <select id="viewModeSelect">
+                <option value="normal">Normal</option>
+                <option value="compact">Kompakt</option>
+                <option value="fit">Fit-to-screen</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Scroll-Modus</span>
+              <select id="scrollModeSelect">
+                <option value="page">Seite (Standard)</option>
+                <option value="container">Container</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="actions">
+            <button class="btn" id="fullscreenPlanBtn" type="button">Vollbild Dienstplan</button>
+          </div>
 
           <div class="actions">
             <button class="btn primary" id="generateBtn" type="button">Dienstplan generieren</button>
@@ -96,7 +123,8 @@
         </section>
 
         <section class="card" id="planCard">
-          <h2>Mitarbeiter</h2>
+          <details class="card-details" open>
+            <summary>Mitarbeiter</summary>
 
           <div class="grid-3">
             <label class="field">
@@ -121,10 +149,12 @@
           <p class="hint">
             Tipp: Erst Mitarbeiter anlegen, dann Blockliste pflegen, dann generieren.
           </p>
+          </details>
         </section>
 
         <section class="card" id="hoursCard">
-          <h2>Export / Import</h2>
+          <details class="card-details" open>
+            <summary>Export / Import</summary>
 
           <div class="actions">
             <button class="btn" id="exportBtn" type="button">Export (JSON)</button>
@@ -138,10 +168,12 @@
           <p class="hint">
             Export/Import ist optional (praktisch für Backup oder Wechsel des PCs).
           </p>
+          </details>
         </section>
 
         <section class="card" id="cacheCard">
-          <h2>Zwischenspeicher-Datei (optional)</h2>
+          <details class="card-details">
+            <summary>Zwischenspeicher-Datei (optional)</summary>
 
           <p class="hint">
             Standardmäßig bleiben alle Daten lokal im Browser gespeichert (LocalStorage). Falls du die ZIP-Version
@@ -160,31 +192,35 @@
           </div>
 
           <div id="cacheStatus" class="hint" aria-live="polite"></div>
+          </details>
         </section>
 
       </div>
+      </details>
 
       <!-- Main content -->
       <div class="main">
         <section class="card" id="blocklistMainCard">
-          <div class="card-head">
-            <h2>Blockliste (Monat)</h2>
-            <div class="legend">
-              <span class="badge freeh">Urlaub</span>
-              <span class="badge wf">WF</span>
-              <span class="badge free0">Frei</span>
-              <span class="badge tdreq">TD Pflicht</span>
-              <span class="badge sv">SV</span>
-              <span class="badge team">Team</span>
-              <span class="badge off">/ (Tag nach IWD)</span>
-              <span class="badge iwd">IWD</span>
-              <span class="badge td">TD</span>
+          <details class="card-details" open>
+            <summary>Blockliste (Monat)</summary>
+            <div class="card-head">
+              <div class="legend">
+                <span class="badge freeh">Urlaub</span>
+                <span class="badge wf">WF</span>
+                <span class="badge free0">Frei</span>
+                <span class="badge tdreq">TD Pflicht</span>
+                <span class="badge sv">SV</span>
+                <span class="badge team">Team</span>
+                <span class="badge off">/ (Tag nach IWD)</span>
+                <span class="badge iwd">IWD</span>
+                <span class="badge td">TD</span>
+              </div>
             </div>
-          </div>
 
           <div class="table-scroll">
-            <table class="table" id="blockTable"></table>
+            <table class="table block-table" id="blockTable"></table>
           </div>
+          </details>
         </section>
 
         <section class="card" id="planSection">
@@ -192,22 +228,25 @@
           <div id="messages" aria-live="polite"></div>
 
           <div class="table-scroll">
-            <table class="table" id="planTable"></table>
+            <table class="table plan-table" id="planTable"></table>
           </div>
         </section>
 
         <section class="card" id="hoursSection">
-          <h2>Stundenübersicht</h2>
-          <div class="table-scroll">
-            <table class="table" id="hoursTable"></table>
-          </div>
-          <div id="hoursNotes" class="hours-notes screen-only" aria-live="polite"></div>
-          <div id="printHoursNotes" class="print-only print-notes" aria-live="polite"></div>
+          <details class="card-details">
+            <summary>Stundenübersicht</summary>
+            <h2 class="print-only">Stundenübersicht</h2>
+            <div class="table-scroll">
+              <table class="table hours-table" id="hoursTable"></table>
+            </div>
+            <div id="hoursNotes" class="hours-notes screen-only" aria-live="polite"></div>
+            <div id="printHoursNotes" class="print-only print-notes" aria-live="polite"></div>
+          </details>
         </section>
 
         <footer class="footer">
           <small>
-            Version 4.3 – Offline-Dienstplan (HTML/CSS/JS). Keine externen Abhängigkeiten.
+            Version 4.4 – Offline-Dienstplan (HTML/CSS/JS). Keine externen Abhängigkeiten.
           </small>
         </footer>
       </div>

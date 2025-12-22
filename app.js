@@ -3,7 +3,7 @@
 
   // ============================================================
   // Offline Dienstplan Generator (Monat)
-  // Version 4.3
+  // Version 4.4
   // ============================================================
 
   const STORAGE_KEY = 'dienstplan_generator_offline_v2';
@@ -280,6 +280,14 @@
     return SPECIAL_DAY.NONE;
   }
 
+  function normalizeViewMode(value){
+    return ['normal', 'compact', 'fit'].includes(value) ? value : 'normal';
+  }
+
+  function normalizeScrollMode(value){
+    return value === 'container' ? 'container' : 'page';
+  }
+
   function getSpecialDayLabel(value){
     return SPECIAL_DAY_CONFIG[value]?.label || '';
   }
@@ -293,7 +301,7 @@
   function defaultState(){
     const month = monthKeyFromDate(new Date());
     return {
-      version: 4.3,
+      version: 4.4,
       month,
       employees: [],
       blocksByMonth: {},
@@ -302,6 +310,9 @@
       settings: {
         attempts: 10000,
         preferGaps: true,
+        viewMode: 'normal',
+        scrollMode: 'page',
+        fullscreenPlan: false,
       },
       lastResultByMonth: {},
     };
@@ -598,6 +609,12 @@
       // Normalize settings
       state.settings.attempts = normalizeAttempts(state.settings.attempts);
       state.settings.preferGaps = Boolean(state.settings.preferGaps);
+      state.settings.viewMode = normalizeViewMode(state.settings.viewMode);
+      state.settings.scrollMode = normalizeScrollMode(state.settings.scrollMode);
+      state.settings.fullscreenPlan = Boolean(state.settings.fullscreenPlan);
+      state.settings.viewMode = normalizeViewMode(state.settings.viewMode);
+      state.settings.scrollMode = normalizeScrollMode(state.settings.scrollMode);
+      state.settings.fullscreenPlan = Boolean(state.settings.fullscreenPlan);
 
       return state;
     }catch(e){
@@ -719,6 +736,9 @@
     // Normalize settings
     state.settings.attempts = normalizeAttempts(state.settings.attempts);
     state.settings.preferGaps = Boolean(state.settings.preferGaps);
+    state.settings.viewMode = normalizeViewMode(state.settings.viewMode);
+    state.settings.scrollMode = normalizeScrollMode(state.settings.scrollMode);
+    state.settings.fullscreenPlan = Boolean(state.settings.fullscreenPlan);
 
     ensureMonthStructures(state.month);
 
@@ -1011,6 +1031,9 @@
   const monthSelectEl = $('#monthSelect');
   const attemptsInputEl = $('#attemptsInput');
   const preferGapsEl = $('#preferGaps');
+  const viewModeEl = $('#viewModeSelect');
+  const scrollModeEl = $('#scrollModeSelect');
+  const fullscreenPlanBtn = $('#fullscreenPlanBtn');
 
   const newEmpNameEl = $('#newEmpName');
   const newEmpHoursEl = $('#newEmpHours');
@@ -1086,6 +1109,125 @@
     });
   }
 
+  function readCssPxVar(name, fallback){
+    const target = document.body || document.documentElement;
+    const raw = getComputedStyle(target).getPropertyValue(name).trim();
+    const n = Number.parseFloat(raw);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  function setRootVar(name, value){
+    document.body.style.setProperty(name, value);
+  }
+
+  function clearRootVar(name){
+    document.body.style.removeProperty(name);
+  }
+
+  let fitRafId = 0;
+
+  function clearPlanFitVars(){
+    clearRootVar('--plan-col-width');
+    clearRootVar('--plan-col-min');
+    clearRootVar('--plan-cell-pad');
+    clearRootVar('--plan-font-size');
+    clearRootVar('--plan-header-font-size');
+    clearRootVar('--plan-date-col-width');
+  }
+
+  function applyPlanFitSizing(){
+    if (!planTableEl || !planTableEl.querySelector('thead')){
+      clearPlanFitVars();
+      return;
+    }
+
+    const headerCells = planTableEl.querySelectorAll('thead th');
+    if (headerCells.length <= 1){
+      clearPlanFitVars();
+      return;
+    }
+
+    const container = planTableEl.closest('.table-scroll') || planTableEl.parentElement;
+    if (!container){
+      clearPlanFitVars();
+      return;
+    }
+
+    const employeeCount = headerCells.length - 1;
+    const availableWidth = container.clientWidth;
+    if (!availableWidth){
+      clearPlanFitVars();
+      return;
+    }
+
+    const baseDateCol = readCssPxVar('--plan-date-col-width', 170);
+    let dateCol = clamp(baseDateCol, 140, 190);
+    let availableForCols = availableWidth - dateCol;
+    let colWidth = Math.floor(availableForCols / employeeCount);
+
+    if (colWidth < 90){
+      const minDate = 120;
+      dateCol = Math.max(minDate, availableWidth - employeeCount * 90);
+      availableForCols = availableWidth - dateCol;
+      colWidth = Math.floor(availableForCols / employeeCount);
+    }
+
+    colWidth = clamp(colWidth, 90, 210);
+
+    const fontSize = clamp(Math.round(10 + (colWidth - 90) * 0.04), 10, 13);
+    const headerFont = clamp(fontSize - 1, 9, 12);
+    const cellPad = clamp(Math.round(4 + (colWidth - 90) * 0.03), 4, 8);
+
+    setRootVar('--plan-col-width', `${colWidth}px`);
+    setRootVar('--plan-col-min', `${colWidth}px`);
+    setRootVar('--plan-cell-pad', `${cellPad}px`);
+    setRootVar('--plan-font-size', `${fontSize}px`);
+    setRootVar('--plan-header-font-size', `${headerFont}px`);
+    setRootVar('--plan-date-col-width', `${Math.round(dateCol)}px`);
+  }
+
+  function scheduleFitSizing(){
+    if (typeof requestAnimationFrame !== 'function'){
+      applyPlanFitSizing();
+      return;
+    }
+    if (fitRafId && typeof cancelAnimationFrame === 'function'){
+      cancelAnimationFrame(fitRafId);
+    }
+    fitRafId = requestAnimationFrame(() => {
+      fitRafId = 0;
+      applyPlanFitSizing();
+    });
+  }
+
+  function updateFullscreenButton(){
+    if (!fullscreenPlanBtn) return;
+    fullscreenPlanBtn.textContent = state.settings.fullscreenPlan
+      ? 'Vollbild beenden'
+      : 'Vollbild Dienstplan';
+  }
+
+  function applyViewSettings(){
+    state.settings.viewMode = normalizeViewMode(state.settings.viewMode);
+    state.settings.scrollMode = normalizeScrollMode(state.settings.scrollMode);
+    state.settings.fullscreenPlan = Boolean(state.settings.fullscreenPlan);
+
+    if (viewModeEl) viewModeEl.value = state.settings.viewMode;
+    if (scrollModeEl) scrollModeEl.value = state.settings.scrollMode;
+
+    document.body.classList.toggle('view-compact', state.settings.viewMode === 'compact');
+    document.body.classList.toggle('view-fit', state.settings.viewMode === 'fit');
+    document.body.classList.toggle('scroll-containers', state.settings.scrollMode === 'container');
+    document.body.classList.toggle('fullscreen-plan', state.settings.fullscreenPlan);
+
+    updateFullscreenButton();
+
+    if (state.settings.viewMode === 'fit'){
+      scheduleFitSizing();
+    } else {
+      clearPlanFitVars();
+    }
+  }
 
 
   // ---------- Render ----------
@@ -1206,6 +1348,7 @@
     renderEmployeeList();
     renderBlockTable();
     renderOutput();
+    applyViewSettings();
   }
 
   
@@ -1387,6 +1530,48 @@ function renderEmployeeList(){
     }
   }
 
+  // ---------- Plan table hover (row + column) ----------
+  let lastHoverCol = null;
+  let lastHoverRow = null;
+  let lastHoverCells = [];
+
+  function clearPlanHover(){
+    if (lastHoverCells.length){
+      lastHoverCells.forEach(cell => cell.classList.remove('col-hover'));
+      lastHoverCells = [];
+    }
+    if (lastHoverRow){
+      lastHoverRow.classList.remove('row-hover');
+      lastHoverRow = null;
+    }
+    lastHoverCol = null;
+  }
+
+  if (planTableEl){
+    planTableEl.addEventListener('mouseover', (ev) => {
+      const cell = ev.target && ev.target.closest
+        ? ev.target.closest('td[data-col], th[data-col]')
+        : null;
+      if (!cell || !planTableEl.contains(cell)) return;
+      const col = cell.getAttribute('data-col');
+      if (!col) return;
+      const row = cell.closest('tbody tr');
+      if (col === lastHoverCol && row === lastHoverRow) return;
+
+      clearPlanHover();
+      lastHoverCol = col;
+      lastHoverRow = row;
+
+      lastHoverCells = Array.from(planTableEl.querySelectorAll(`[data-col="${col}"]`));
+      lastHoverCells.forEach(target => target.classList.add('col-hover'));
+      if (row) row.classList.add('row-hover');
+    });
+
+    planTableEl.addEventListener('mouseleave', () => {
+      clearPlanHover();
+    });
+  }
+
   function buildPlanCell(res, empId, dayIdx){
     const monthKey = res.monthKey;
     const day = res.days[dayIdx];
@@ -1434,11 +1619,11 @@ function renderEmployeeList(){
     const thead = `
       <thead>
         <tr>
-          <th class="sticky-col plan-head" style="min-width: 170px;">
+          <th class="sticky-col plan-head" data-col="0">
             <span class="screen-only">Datum</span>
             <span class="print-only-inline plan-print-title">Dienstplan – ${escapeHtml(monthLabel)}</span>
           </th>
-          ${employees.map(e => `<th style="min-width: 180px;">${escapeHtml(e.name)}</th>`).join('')}
+          ${employees.map((e, idx) => `<th data-col="${idx + 1}">${escapeHtml(e.name)}</th>`).join('')}
         </tr>
       </thead>
     `;
@@ -1453,25 +1638,27 @@ function renderEmployeeList(){
       const rowCls = [isSunday ? 'row-sunday' : '', isHoliday ? 'row-holiday' : ''].filter(Boolean).join(' ');
       const dateHtml = renderDateCellHtml(day, { isHoliday, isSunday, holidayName, tdReq, specialDay });
 
-      const cells = employees.map(emp => `<td>${buildPlanCell(res, emp.id, idx)}</td>`).join('');
+      const cells = employees.map((emp, colIdx) => (
+        `<td data-col="${colIdx + 1}">${buildPlanCell(res, emp.id, idx)}</td>`
+      )).join('');
       return `
         <tr class="${rowCls}">
-          <td class="sticky-col">${dateHtml}</td>
+          <td class="sticky-col" data-col="0">${dateHtml}</td>
           ${cells}
         </tr>
       `;
     }).join('');
 
     // footer row: total hours per employee
-    const totals = employees.map(emp => {
+    const totals = employees.map((emp, idx) => {
       const sum = res.monthSummaryByEmpId[emp.id]?.totalHours ?? 0;
-      return `<td><strong>${round1(sum)}h</strong></td>`;
+      return `<td data-col="${idx + 1}"><strong>${round1(sum)}h</strong></td>`;
     }).join('');
 
     const tfoot = `
       <tfoot>
         <tr>
-          <th class="sticky-col">Summe (Monat)</th>
+          <th class="sticky-col" data-col="0">Summe (Monat)</th>
           ${totals}
         </tr>
       </tfoot>
@@ -3805,6 +3992,30 @@ self.onmessage = async (e) => {
     saveState();
   });
 
+  if (viewModeEl){
+    viewModeEl.addEventListener('change', () => {
+      state.settings.viewMode = normalizeViewMode(viewModeEl.value);
+      saveState();
+      applyViewSettings();
+    });
+  }
+
+  if (scrollModeEl){
+    scrollModeEl.addEventListener('change', () => {
+      state.settings.scrollMode = normalizeScrollMode(scrollModeEl.value);
+      saveState();
+      applyViewSettings();
+    });
+  }
+
+  if (fullscreenPlanBtn){
+    fullscreenPlanBtn.addEventListener('click', () => {
+      state.settings.fullscreenPlan = !state.settings.fullscreenPlan;
+      saveState();
+      applyViewSettings();
+    });
+  }
+
   addEmpBtn.addEventListener('click', () => {
     const name = String(newEmpNameEl.value || '').trim();
     const weeklyHours = toNumber(newEmpHoursEl.value, 0);
@@ -4133,6 +4344,12 @@ blockTableEl.addEventListener('click', (ev) => {
 
   window.addEventListener('beforeunload', () => {
     saveToCacheFile();
+  });
+
+  window.addEventListener('resize', () => {
+    if (state.settings.viewMode === 'fit'){
+      scheduleFitSizing();
+    }
   });
 
   ensureCacheHandleLoaded();
