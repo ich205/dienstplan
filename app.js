@@ -3746,6 +3746,9 @@ self.onmessage = async (e) => {
 
     while (done < total){
       if (abortRequested){
+        if (softAbortRequested){
+          break;
+        }
         throw toAbortError();
       }
 
@@ -3797,7 +3800,13 @@ self.onmessage = async (e) => {
           consecutiveOk = 0;
         }
       } catch (err) {
-        if (abortRequested || err?.name === 'AbortError'){
+        if (abortRequested){
+          if (softAbortRequested){
+            break;
+          }
+          throw err;
+        }
+        if (err?.name === 'AbortError'){
           throw err;
         }
 
@@ -3816,11 +3825,12 @@ self.onmessage = async (e) => {
     }
 
     if (best){
-      best.attemptsUsed = total;
+      const attemptsUsed = softAbortRequested ? done : total;
+      best.attemptsUsed = attemptsUsed;
       if (best.settings){
-        best.settings.attempts = total;
+        best.settings.attempts = attemptsUsed;
       } else {
-        best.settings = { attempts: total, preferGaps: Boolean(payload?.settings?.preferGaps) };
+        best.settings = { attempts: attemptsUsed, preferGaps: Boolean(payload?.settings?.preferGaps) };
       }
       best.generatedAt = new Date().toISOString();
     }
@@ -3995,7 +4005,7 @@ self.onmessage = async (e) => {
     if (!solveInProgress || softAbortRequested) return;
     softAbortRequested = true;
     abortRequested = true;
-    showNonFatalWarning('Sanfter Stopp angefordert. Aktueller Slice wird beendet.');
+    showNonFatalWarning('Best so far angefordert. Aktueller Slice wird beendet.');
     if (softAbortBtn) softAbortBtn.disabled = true;
   }
 
