@@ -257,6 +257,14 @@ input::placeholder{
   isolation: isolate;
 }
 
+body:not(.scroll-containers) .table-scroll{
+  padding-top: var(--sticky-top);
+}
+
+body:not(.scroll-containers) .table-scroll > .table{
+  margin-top: calc(-1 * var(--sticky-top));
+}
+
 .table{
   width: 100%;
   border-collapse: separate;
