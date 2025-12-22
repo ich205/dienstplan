@@ -101,6 +101,10 @@ html, body{
   align-items: end;
 }
 
+.span-full{
+  grid-column: 1 / -1;
+}
+
 @media (max-width: 800px){
   .grid-2{ grid-template-columns: 1fr; }
   .grid-3{ grid-template-columns: 1fr; }
@@ -480,6 +484,18 @@ code{
   background: rgba(255,255,255,.04);
 }
 
+.sidebar-shell > summary .summary-compact{
+  display: none;
+}
+
+.sidebar-shell:not([open]) > summary .summary-full{
+  display: none;
+}
+
+.sidebar-shell:not([open]) > summary .summary-compact{
+  display: inline;
+}
+
 .sidebar-shell[open] > summary{
   margin-bottom: 8px;
 }
@@ -504,10 +520,33 @@ code{
     overflow: auto;
   }
   .sidebar-shell > summary{
-    display: none;
+    position: sticky;
+    top: 0;
+    z-index: 2;
   }
   .sidebar-shell::-webkit-scrollbar{ width: 10px; }
   .sidebar-shell::-webkit-scrollbar-thumb{ background: rgba(255,255,255,.10); border-radius: 999px; }
+}
+
+.sidebar-shell:not([open]) .sidebar{
+  display: none;
+}
+
+.sidebar-shell:not([open]){
+  padding-bottom: 6px;
+}
+
+@media (min-width: 1100px){
+  body.sidebar-collapsed .page-grid{
+    grid-template-columns: 72px 1fr;
+  }
+  body.sidebar-collapsed .sidebar-shell{
+    max-height: calc(100vh - 110px);
+  }
+  body.sidebar-collapsed .sidebar-shell > summary{
+    justify-content: center;
+    text-align: center;
+  }
 }
 
 .main{
@@ -533,6 +572,16 @@ body.fullscreen-plan #blocklistMainCard,
 body.fullscreen-plan #hoursSection,
 body.fullscreen-plan .footer{
   display: none;
+}
+
+.fullscreen-actions{
+  display: none;
+  margin-bottom: 12px;
+}
+
+body.fullscreen-plan .fullscreen-actions{
+  display: flex;
+  justify-content: flex-end;
 }
 
 /* ---- Card head / legend ---- */

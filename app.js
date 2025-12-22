@@ -1034,6 +1034,8 @@
   const viewModeEl = $('#viewModeSelect');
   const scrollModeEl = $('#scrollModeSelect');
   const fullscreenPlanBtn = $('#fullscreenPlanBtn');
+  const exitFullscreenBtn = $('#exitFullscreenBtn');
+  const sidebarShellEl = $('#sidebarShell');
 
   const newEmpNameEl = $('#newEmpName');
   const newEmpHoursEl = $('#newEmpHours');
@@ -1207,6 +1209,11 @@
       : 'Vollbild Dienstplan';
   }
 
+  function applySidebarCollapsedState(){
+    if (!sidebarShellEl) return;
+    document.body.classList.toggle('sidebar-collapsed', !sidebarShellEl.open);
+  }
+
   function applyViewSettings(){
     state.settings.viewMode = normalizeViewMode(state.settings.viewMode);
     state.settings.scrollMode = normalizeScrollMode(state.settings.scrollMode);
@@ -1221,6 +1228,7 @@
     document.body.classList.toggle('fullscreen-plan', state.settings.fullscreenPlan);
 
     updateFullscreenButton();
+    applySidebarCollapsedState();
 
     if (state.settings.viewMode === 'fit'){
       scheduleFitSizing();
@@ -4013,6 +4021,20 @@ self.onmessage = async (e) => {
       state.settings.fullscreenPlan = !state.settings.fullscreenPlan;
       saveState();
       applyViewSettings();
+    });
+  }
+
+  if (exitFullscreenBtn){
+    exitFullscreenBtn.addEventListener('click', () => {
+      state.settings.fullscreenPlan = false;
+      saveState();
+      applyViewSettings();
+    });
+  }
+
+  if (sidebarShellEl){
+    sidebarShellEl.addEventListener('toggle', () => {
+      applySidebarCollapsedState();
     });
   }
 
