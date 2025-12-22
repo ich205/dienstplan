@@ -897,6 +897,25 @@ body.scroll-containers{
   align-items: center;
 }
 
+.actions .abort-actions{
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.actions .abort-actions .btn{
+  white-space: nowrap;
+}
+
+.btn.soft-abort{
+  border-color: rgba(255,209,102,.5);
+  color: var(--text);
+}
+
+.btn.soft-abort:hover{
+  background: rgba(255,209,102,.12);
+}
+
 .actions.wrap-actions .btn{
   flex: 1 1 auto;
 }

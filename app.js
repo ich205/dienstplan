@@ -1045,6 +1045,7 @@
 
   const generateBtn = $('#generateBtn');
   const clearBtn = $('#clearBtn');
+  const softAbortBtn = $('#softAbortBtn');
   const printBtn = $('#printBtn');
 
   // Progress UI
@@ -3484,6 +3485,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
   let lastUiProgressAt = 0;
   let lastProgressSnapshot = { done: 0, total: 0 };
   let abortRequested = false;
+  let softAbortRequested = false;
   let activeSliceWorker = null;
   let activeSliceReject = null;
   let WORKER_URL = null;
@@ -3845,6 +3847,7 @@ self.onmessage = async (e) => {
         const result = await solver.solve(payload, {
           onProgress: (done, total, meta) => callIfCurrent(onProgress, done, total, meta),
           signal,
+          shouldCancel: () => abortRequested,
         });
         callIfCurrent(onDone, result);
       } catch (err) {
@@ -3896,6 +3899,10 @@ self.onmessage = async (e) => {
       clearBtn.disabled = false;
       clearBtn.textContent = isSolving ? 'Stop' : 'Ausgabe leeren';
     }
+    if (softAbortBtn){
+      softAbortBtn.disabled = !isSolving;
+      softAbortBtn.classList.toggle('hidden', !isSolving);
+    }
   }
 
   function startSolve(payload, { onProgress, onDone, onError } = {}){
@@ -3908,6 +3915,7 @@ self.onmessage = async (e) => {
     const jobId = ++currentJobId;
     lastUiProgressAt = 0;
     abortRequested = false;
+    softAbortRequested = false;
     const startedAt = nowMs();
 
     const handleProgress = (done, total, meta) => {
@@ -3964,6 +3972,7 @@ self.onmessage = async (e) => {
 
   function cancelSolve(){
     abortRequested = true;
+    softAbortRequested = false;
     if (activeSliceWorker){
       try {
         activeSliceWorker.terminate();
@@ -3980,6 +3989,14 @@ self.onmessage = async (e) => {
       activeSolveReject(toAbortError());
       activeSolveReject = null;
     }
+  }
+
+  function requestSoftAbort(){
+    if (!solveInProgress || softAbortRequested) return;
+    softAbortRequested = true;
+    abortRequested = true;
+    showNonFatalWarning('Sanfter Stopp angefordert. Aktueller Slice wird beendet.');
+    if (softAbortBtn) softAbortBtn.disabled = true;
   }
 
   // ---------- Events ----------
@@ -4284,6 +4301,13 @@ blockTableEl.addEventListener('click', (ev) => {
     saveState();
     renderAll();
   });
+
+  if (softAbortBtn){
+    softAbortBtn.addEventListener('click', () => {
+      if (!solveInProgress) return;
+      requestSoftAbort();
+    });
+  }
 
   printBtn.addEventListener('click', () => {
     const res = state.lastResultByMonth[state.month];
