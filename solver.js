@@ -30,7 +30,10 @@ function round1(n){
 }
 
 function normalizeSpecialDay(value){
-  if (value === SPECIAL_DAY.SV || value === SPECIAL_DAY.TEAM) return value;
+  if (value === null || typeof value === 'undefined' || value === '') return SPECIAL_DAY.NONE;
+  const normalized = String(value).toUpperCase();
+  if (normalized === 'SV') return SPECIAL_DAY.SV;
+  if (normalized === 'TEAM') return SPECIAL_DAY.TEAM;
   return SPECIAL_DAY.NONE;
 }
 
@@ -1161,6 +1164,7 @@ if (typeof self !== 'undefined'){
   const inlineHelperFns = [
     clamp,
     round1,
+    normalizeSpecialDay,
     defaultEmpPrefs,
     sanitizePrefs,
     balanceMonthlyAdjustment,
@@ -1188,6 +1192,7 @@ if (typeof self !== 'undefined'){
     return [
       `const BLOCK = ${JSON.stringify(BLOCK)};`,
       `const SHIFT = ${JSON.stringify(SHIFT)};`,
+      `const SPECIAL_DAY = ${JSON.stringify(SPECIAL_DAY)};`,
       '',
       helpersSource,
       '',
