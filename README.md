@@ -1,4 +1,5 @@
-# Dienstplan Generator (Offline, Monat) – Version 4.4
+# Dienstplan Generator (Offline, Monat) – Version Alpha 5.2.1*
+*Ergebnisse stets prüfen und ggf. anpassen.
 
 ## Start
 - ZIP entpacken

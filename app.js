@@ -3,7 +3,7 @@
 
   // ============================================================
   // Offline Dienstplan Generator (Monat)
-  // Version 4.4
+  // Version Alpha 5.2.1* – Ergebnisse stets prüfen und ggf. anpassen.
   // ============================================================
 
   const STORAGE_KEY = 'dienstplan_generator_offline_v2';
