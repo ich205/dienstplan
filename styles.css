@@ -278,7 +278,13 @@ input::placeholder{
   position: sticky;
   top: var(--sticky-top);
   background: var(--panel);
-  z-index: 1;
+  z-index: 10;
+}
+
+.table tbody td,
+.table tbody th{
+  position: relative;
+  z-index: 0;
 }
 
 .table td{
@@ -626,7 +632,7 @@ body.fullscreen-plan .fullscreen-actions{
 }
 
 .table thead .sticky-col{
-  z-index: 3;
+  z-index: 12;
 }
 
 /* zweite Sticky-Spalte (TD Pflicht) */
@@ -638,7 +644,7 @@ body.fullscreen-plan .fullscreen-actions{
 }
 
 .table thead .sticky-col2{
-  z-index: 3;
+  z-index: 12;
 }
 
 /* ---- Month block toggles ---- */
@@ -1115,13 +1121,13 @@ body.scroll-containers{
 .plan-table thead th{
   position: sticky;
   top: var(--sticky-top);
-  z-index: 3;
+  z-index: 10;
   background: var(--panel);
 }
 
 .plan-table thead th.sticky-col{
   left: 0;
-  z-index: 6;
+  z-index: 12;
   background: var(--panel-strong);
 }
 
