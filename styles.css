@@ -33,9 +33,9 @@ html, body{
 }
 
 .wrap{
-  max-width: 1800px;
-  margin: 0 auto;
-  padding: 0 16px;
+  max-width: 100%;
+  margin: 0;
+  padding: 0 12px;
 }
 
 .app-header{
@@ -272,6 +272,9 @@ input::placeholder{
   text-align: left;
   font-size: 12px;
   color: var(--muted);
+}
+
+.table thead th{
   position: sticky;
   top: var(--sticky-top);
   background: var(--panel);
@@ -522,7 +525,7 @@ code{
 
 @media (min-width: 1100px){
   .page-grid{
-    grid-template-columns: minmax(320px, 420px) 1fr;
+    grid-template-columns: minmax(260px, 360px) 1fr;
     grid-template-areas: "sidebar main";
   }
   .sidebar-shell{
