@@ -258,11 +258,11 @@ input::placeholder{
 }
 
 body:not(.scroll-containers) .table-scroll{
-  padding-top: var(--sticky-top);
+  padding-top: 0;
 }
 
 body:not(.scroll-containers) .table-scroll > .table{
-  margin-top: calc(-1 * var(--sticky-top));
+  margin-top: 0;
 }
 
 .table{
@@ -289,6 +289,11 @@ body:not(.scroll-containers) .table-scroll > .table{
   top: var(--sticky-top);
   background: var(--panel);
   z-index: 50;
+}
+
+body:not(.scroll-containers) .table thead th{
+  position: static;
+  top: auto;
 }
 
 .table tbody td,
