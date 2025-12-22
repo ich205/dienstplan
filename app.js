@@ -1752,7 +1752,9 @@ function renderEmployeeList(){
 
     const notes = [];
     const messages = Array.isArray(res.messages) ? res.messages : [];
-    const overtimeWarns = messages.filter(m => m.type === 'warn' && /zu wenig Soll-Stunden/i.test(m.title || ''));
+    const overtimeWarns = messages.filter(
+      m => m.type === 'warn' && /Soll-Stunden/i.test(m.title || '')
+    );
     for (const warn of overtimeWarns){
       notes.push({
         type: 'warn',
