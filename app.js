@@ -1849,41 +1849,13 @@ function renderEmployeeList(){
     state.lastResultByMonth[state.month] = res;
   }
 
-  function trySwapBlocks(srcCell, dstCell){
-    const grid = getCurrentPlanGrid();
+  function tryMoveBlock(grid, block, dest){
     if (!grid) return { ok: false, error: 'Plan nicht gefunden.' };
 
-    if (!grid[srcCell.r] || !grid[dstCell.r]){
-      return { ok: false, error: 'Tausch nicht möglich – Konflikt mit einem anderen Dienst.' };
-    }
-    if (
-      srcCell.c < 0 || dstCell.c < 0
-      || srcCell.c >= grid[srcCell.r].length
-      || dstCell.c >= grid[dstCell.r].length
-    ){
-      return { ok: false, error: 'Tausch nicht möglich – Konflikt mit einem anderen Dienst.' };
-    }
-
-    const src0 = normalizeToBlockStart(grid, srcCell.r, srcCell.c);
-    const dst0 = normalizeToBlockStart(grid, dstCell.r, dstCell.c);
-
-    const srcB = getBlockAt(grid, src0.r, src0.c);
-    const dstB = getBlockAt(grid, dst0.r, dst0.c);
-
-    if (srcB.type === 'EMPTY' || srcB.invalid) return { ok: false, error: 'Tausch nicht möglich – Konflikt mit einem anderen Dienst.' };
-    if (dstB.invalid) return { ok: false, error: 'Tausch nicht möglich – Konflikt mit einem anderen Dienst.' };
-
-    if (srcB.r === dstB.r && srcB.c === dstB.c) return { ok: true };
-
     const clearSet = new Set();
-    for (let i = 0; i < srcB.len; i++) clearSet.add(key(srcB.r, srcB.c + i));
-    for (let i = 0; i < dstB.len; i++) clearSet.add(key(dstB.r, dstB.c + i));
+    for (let i = 0; i < block.len; i++) clearSet.add(key(block.r, block.c + i));
 
-    if (!canPlaceBlock(grid, srcB, dstB.r, dstB.c, clearSet)){
-      return { ok: false, error: 'Tausch nicht möglich – Konflikt mit einem anderen Dienst.' };
-    }
-
-    if (!canPlaceBlock(grid, dstB, srcB.r, srcB.c, clearSet)){
+    if (!canPlaceBlock(grid, block, dest.r, dest.c, clearSet)){
       return { ok: false, error: 'Tausch nicht möglich – Konflikt mit einem anderen Dienst.' };
     }
 
@@ -1894,17 +1866,46 @@ function renderEmployeeList(){
       if (newGrid?.[rr]) newGrid[rr][cc] = '';
     });
 
-    for (let i = 0; i < srcB.len; i++){
-      newGrid[dstB.r][dstB.c + i] = srcB.values[i];
+    for (let i = 0; i < block.len; i++){
+      newGrid[dest.r][dest.c + i] = block.values[i];
     }
 
-    for (let i = 0; i < dstB.len; i++){
-      newGrid[srcB.r][srcB.c + i] = dstB.values[i];
+    return { ok: true, grid: newGrid };
+  }
+
+  function trySwapBlocks(grid, aBlock, bBlock){
+    if (!grid) return { ok: false, error: 'Plan nicht gefunden.' };
+
+    if (aBlock.r === bBlock.r && aBlock.c === bBlock.c) return { ok: true, grid };
+
+    const clearSet = new Set();
+    for (let i = 0; i < aBlock.len; i++) clearSet.add(key(aBlock.r, aBlock.c + i));
+    for (let i = 0; i < bBlock.len; i++) clearSet.add(key(bBlock.r, bBlock.c + i));
+
+    if (!canPlaceBlock(grid, aBlock, bBlock.r, bBlock.c, clearSet)){
+      return { ok: false, error: 'Tausch nicht möglich – Konflikt mit einem anderen Dienst.' };
     }
 
-    setCurrentPlanGrid(newGrid);
+    if (!canPlaceBlock(grid, bBlock, aBlock.r, aBlock.c, clearSet)){
+      return { ok: false, error: 'Tausch nicht möglich – Konflikt mit einem anderen Dienst.' };
+    }
 
-    return { ok: true };
+    const newGrid = grid.map(row => row.slice());
+
+    clearSet.forEach(k => {
+      const [rr, cc] = k.split(':').map(Number);
+      if (newGrid?.[rr]) newGrid[rr][cc] = '';
+    });
+
+    for (let i = 0; i < aBlock.len; i++){
+      newGrid[bBlock.r][bBlock.c + i] = aBlock.values[i];
+    }
+
+    for (let i = 0; i < bBlock.len; i++){
+      newGrid[aBlock.r][aBlock.c + i] = bBlock.values[i];
+    }
+
+    return { ok: true, grid: newGrid };
   }
 
   function rerenderPlanAndPersist(){
@@ -2023,12 +2024,41 @@ function renderEmployeeList(){
     const dst = { r: Number(targetCell.dataset.r), c: Number(targetCell.dataset.c) };
     if (!Number.isFinite(dst.r) || !Number.isFinite(dst.c)) return;
 
-    const res = trySwapBlocks(src, dst);
-    if (!res.ok){
+    const grid = getCurrentPlanGrid();
+    if (!grid || !grid[src.r] || !grid[dst.r]) return;
+
+    if (
+      src.c < 0 || dst.c < 0
+      || src.c >= grid[src.r].length
+      || dst.c >= grid[dst.r].length
+    ){
+      return;
+    }
+
+    const srcStart = normalizeToBlockStart(grid, src.r, src.c);
+    const dstStart = normalizeToBlockStart(grid, dst.r, dst.c);
+
+    const srcBlock = getBlockAt(grid, srcStart.r, srcStart.c);
+    const dstBlock = getBlockAt(grid, dstStart.r, dstStart.c);
+
+    if (srcBlock.type === 'EMPTY' || srcBlock.invalid || dstBlock.invalid){
+      showToast('Tausch nicht möglich – Konflikt mit einem anderen Dienst.');
+      return;
+    }
+
+    let res;
+    if (dstBlock.type !== 'EMPTY'){
+      res = trySwapBlocks(grid, srcBlock, dstBlock);
+    } else {
+      res = tryMoveBlock(grid, srcBlock, dstStart);
+    }
+
+    if (!res.ok || !res.grid){
       showToast(res.error || 'Tausch nicht möglich – Konflikt mit einem anderen Dienst.');
       return;
     }
 
+    setCurrentPlanGrid(res.grid);
     rerenderPlanAndPersist();
     dragPayload = null;
   }
