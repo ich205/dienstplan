@@ -1936,6 +1936,27 @@ function renderEmployeeList(){
     decoratePlanCellsForDnD();
   }
 
+  // Swap helpers for the drag & drop cross-swap behavior
+  function swapValuesInDay(grid, dayIdx, empAIdx, empBIdx){
+    const tmp = grid?.[empAIdx]?.[dayIdx];
+    grid[empAIdx][dayIdx] = grid?.[empBIdx]?.[dayIdx];
+    grid[empBIdx][dayIdx] = tmp;
+  }
+
+  function crossSwapColumnsAcrossTwoDays(grid, dayA, dayB, empA, empB){
+    // gleiche Zeile -> einfacher Swap innerhalb des Tages
+    if (dayA === dayB){
+      swapValuesInDay(grid, dayA, empA, empB);
+      return;
+    }
+    // gleiche Spalte -> nichts zu tun
+    if (empA === empB) return;
+
+    // gewünschtes Verhalten: beide Tage behalten, nur Spalten (Mitarbeiter) tauschen
+    swapValuesInDay(grid, dayA, empA, empB);
+    swapValuesInDay(grid, dayB, empA, empB);
+  }
+
   function showToast(msg){
     const el = document.getElementById('toast');
     if (!el){
@@ -1992,7 +2013,8 @@ function renderEmployeeList(){
     const c = Number(cell.dataset.c);
     if (!Number.isFinite(r) || !Number.isFinite(c)) return;
 
-    dragPayload = { r, c };
+    // r = Mitarbeiter (Spalte), c = Tag (Zeile)
+    dragPayload = { row: c, col: r };
 
     try {
       e.dataTransfer.effectAllowed = 'move';
@@ -2042,54 +2064,36 @@ function renderEmployeeList(){
     }
     if (!src) return;
 
-    const dst = { r: Number(targetCell.dataset.r), c: Number(targetCell.dataset.c) };
-    if (!Number.isFinite(dst.r) || !Number.isFinite(dst.c)) return;
+    const dst = { row: Number(targetCell.dataset.c), col: Number(targetCell.dataset.r) };
+    if (!Number.isFinite(dst.row) || !Number.isFinite(dst.col)) return;
 
     const grid = getCurrentPlanGrid();
-    if (!grid || !grid[src.r] || !grid[dst.r]) return;
+    if (!grid) return;
+    const daysCount = grid[0]?.length ?? 0;
+    const empCount = grid.length;
+
+    const srcRow = Number(src.row ?? src.c);
+    const srcCol = Number(src.col ?? src.r);
+
+    if (!Number.isFinite(srcRow) || !Number.isFinite(srcCol)) return;
 
     if (
-      src.c < 0 || dst.c < 0
-      || src.c >= grid[src.r].length
-      || dst.c >= grid[dst.r].length
+      srcCol < 0 || dst.col < 0
+      || srcCol >= empCount || dst.col >= empCount
+      || srcRow < 0 || dst.row < 0
+      || srcRow >= daysCount || dst.row >= daysCount
     ){
       return;
     }
 
-    const srcStart = normalizeToBlockStart(grid, src.r, src.c);
-    const dstStart = normalizeToBlockStart(grid, dst.r, dst.c);
+    // Drop auf die gleiche Zelle: nichts tun
+    if (srcRow === dst.row && srcCol === dst.col) return;
 
-    const srcBlock = getBlockAt(grid, srcStart.r, srcStart.c);
-    const dstBlock = getBlockAt(grid, dstStart.r, dstStart.c);
+    // Cross-Swap über zwei Zeilen (Tage): Dienste bleiben in ihren Zeilen, wechseln aber die Spalten
+    const newGrid = grid.map(row => row.slice());
+    crossSwapColumnsAcrossTwoDays(newGrid, srcRow, dst.row, srcCol, dst.col);
 
-    if (srcBlock.type === 'EMPTY' || srcBlock.invalid || dstBlock.invalid){
-      showToast('Tausch nicht möglich – Konflikt mit einem anderen Dienst.');
-      return;
-    }
-
-    let res;
-    if (dstBlock.type !== 'EMPTY'){
-      res = trySwapBlocks(grid, srcBlock, dstBlock);
-    } else {
-      res = tryMoveBlock(grid, srcBlock, dstStart);
-
-      // Fallback: allow 1:1 Tausch mit bestehendem Dienst in der Zielspalte
-      // (z.B. IWD ↔ IWD), auch wenn der direkte Move wegen Spaltenregeln
-      // scheitern würde.
-      if ((!res.ok || !res.grid) && srcBlock.type !== 'EMPTY'){
-        const candidate = findFirstBlockInColumn(grid, dstStart.c, { ignore: srcBlock });
-        if (candidate){
-          res = trySwapBlocks(grid, srcBlock, candidate);
-        }
-      }
-    }
-
-    if (!res.ok || !res.grid){
-      showToast(res.error || 'Tausch nicht möglich – Konflikt mit einem anderen Dienst.');
-      return;
-    }
-
-    setCurrentPlanGrid(res.grid);
+    setCurrentPlanGrid(newGrid);
     rerenderPlanAndPersist();
     dragPayload = null;
   }
