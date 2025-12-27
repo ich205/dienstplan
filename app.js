@@ -2403,6 +2403,18 @@ function renderEmployeeList(){
       });
     }
 
+    const missingRequiredTd = res.days
+      .map((day, idx) => ({ day, idx }))
+      .filter(({ day, idx }) => getTdRequired(res.monthKey, day.iso) && !res.schedule.td[idx])
+      .map(({ day }) => day.label);
+    if (missingRequiredTd.length){
+      notes.push({
+        type: 'danger',
+        title: 'Pflicht-TD fehlt',
+        details: missingRequiredTd.join(', '),
+      });
+    }
+
     return notes;
   }
 
