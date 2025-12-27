@@ -2315,6 +2315,10 @@ function renderEmployeeList(){
       </thead>
     `;
 
+    let totalContractTarget = 0;
+    let totalDeltaDesired = 0;
+    let totalBalanceEnd = 0;
+
     const rows = employees.map(emp => {
       const s = res.monthSummaryByEmpId[emp.id];
       if (!s) return '';
@@ -2322,6 +2326,10 @@ function renderEmployeeList(){
       const balStart = Number(s.balanceStart || 0);
       const balAdj = Number(s.balanceAdjust || 0);
       const balEnd = Number(s.balanceEnd || 0);
+
+      totalContractTarget += Number(s.contractTargetHours || 0);
+      totalDeltaDesired += Number(s.deltaDesired || 0);
+      totalBalanceEnd += balEnd;
 
       const balStartStr = `${balStart > 0 ? '+' : ''}${round1(balStart)}`;
       const balAdjStr = `${balAdj > 0 ? '+' : ''}${round1(balAdj)}`;
@@ -2348,6 +2356,25 @@ function renderEmployeeList(){
       `;
     }).join('');
 
+    const totalBalEndStr = `${totalBalanceEnd > 0 ? '+' : ''}${round1(totalBalanceEnd)}`;
+    const totalRow = `
+      <tr class="total-row">
+        <th>Summe</th>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td class="num">${round1(totalContractTarget)}</td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td class="center">${deltaBadgeHtml(totalDeltaDesired)}</td>
+        <td class="num"><strong>${totalBalEndStr}</strong></td>
+      </tr>
+    `;
+
     const foot = `
       <tfoot>
         <tr>
@@ -2359,7 +2386,7 @@ function renderEmployeeList(){
       </tfoot>
     `;
 
-    return `${thead}<tbody>${rows}</tbody>${foot}`;
+    return `${thead}<tbody>${rows}${totalRow}</tbody>${foot}`;
   }
 
   function buildHoursNotes(res){
