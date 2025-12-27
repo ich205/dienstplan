@@ -1278,3 +1278,39 @@ body.view-fit{
 }
 
 .prio-panel li strong{ color: var(--text); }
+
+/* Edit button active */
+.btn-edit.is-active {
+  background: #1976d2;
+  color: #fff;
+}
+
+/* Plan editing mode */
+.plan.is-editing .plan-cell.is-draggable {
+  cursor: grab;
+  outline: 1px dashed rgba(25,118,210,0.6);
+}
+
+.plan.is-editing .plan-cell.is-draggable:active {
+  cursor: grabbing;
+}
+
+.plan .plan-cell.is-drop-target {
+  outline: 2px solid #1976d2;
+}
+
+.toast {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.85);
+  color: #fff;
+  font-size: 14px;
+  display: none;
+  max-width: 420px;
+  z-index: 9999;
+}
+
+.toast.is-visible { display: block; }

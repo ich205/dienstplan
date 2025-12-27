@@ -626,6 +626,9 @@
   }
 
   let state = loadState();
+  let isEditMode = false;
+  let dragPayload = null; // { r, c }
+  let toastTimer = null;
 
   function saveState(){
     try{
@@ -1047,6 +1050,7 @@
   const clearBtn = $('#clearBtn');
   const softAbortBtn = $('#softAbortBtn');
   const printBtn = $('#printBtn');
+  const editPlanBtn = $('#btnEditPlan');
 
   // Progress UI
   const progressWrapEl = $('#progressWrap');
@@ -1504,6 +1508,8 @@ function renderEmployeeList(){
       if (printHeaderEl) printHeaderEl.innerHTML = '';
       if (printHoursNotesEl) printHoursNotesEl.innerHTML = '';
       if (printBtn) printBtn.disabled = true;
+      planTableEl.classList.toggle('is-editing', isEditMode);
+      decoratePlanCellsForDnD();
       return;
     }
 
@@ -1520,6 +1526,8 @@ function renderEmployeeList(){
     planTableEl.innerHTML = renderPlanTable(res);
     hoursTableEl.innerHTML = renderHoursTable(res);
     renderHoursNotes(res);
+    planTableEl.classList.toggle('is-editing', isEditMode);
+    decoratePlanCellsForDnD();
 
     if (printBtn) printBtn.disabled = false;
 
@@ -1559,6 +1567,7 @@ function renderEmployeeList(){
   }
 
   if (planTableEl){
+    planTableEl.classList.add('plan');
     planTableEl.addEventListener('mouseover', (ev) => {
       const cell = ev.target && ev.target.closest
         ? ev.target.closest('td[data-col], th[data-col]')
@@ -1581,6 +1590,29 @@ function renderEmployeeList(){
     planTableEl.addEventListener('mouseleave', () => {
       clearPlanHover();
     });
+
+    planTableEl.addEventListener('dragstart', onPlanDragStart);
+    planTableEl.addEventListener('dragover', onPlanDragOver);
+    planTableEl.addEventListener('dragleave', onPlanDragLeave);
+    planTableEl.addEventListener('drop', onPlanDrop);
+    planTableEl.addEventListener('dragend', onPlanDragEnd);
+  }
+
+  function getPlanCellValue(res, empId, dayIdx){
+    const monthKey = res.monthKey;
+    const day = res.days[dayIdx];
+    if (!day) return '';
+
+    if (res.schedule.iwd[dayIdx] === empId) return SHIFT.IWD.key;
+    if (res.schedule.td[dayIdx] === empId) return SHIFT.TD.key;
+
+    const forced = res.forcedOff && res.forcedOff[empId] && res.forcedOff[empId][dayIdx];
+    if (forced) return '/';
+
+    const blk = getBlock(monthKey, empId, day.iso);
+    if (blk && blk !== BLOCK.NONE) return blk;
+
+    return '';
   }
 
   function buildPlanCell(res, empId, dayIdx){
@@ -1649,9 +1681,13 @@ function renderEmployeeList(){
       const rowCls = [isSunday ? 'row-sunday' : '', isHoliday ? 'row-holiday' : ''].filter(Boolean).join(' ');
       const dateHtml = renderDateCellHtml(day, { isHoliday, isSunday, holidayName, tdReq, specialDay });
 
-      const cells = employees.map((emp, colIdx) => (
-        `<td data-col="${colIdx + 1}">${buildPlanCell(res, emp.id, idx)}</td>`
-      )).join('');
+      const cells = employees.map((emp, colIdx) => {
+        const val = getPlanCellValue(res, emp.id, idx);
+        const safeVal = escapeHtml(val);
+        return (
+          `<td class="plan-cell" data-col="${colIdx + 1}" data-r="${colIdx}" data-c="${idx}" data-date="${escapeHtml(day.iso)}" data-val="${safeVal}">${buildPlanCell(res, emp.id, idx)}</td>`
+        );
+      }).join('');
       return `
         <tr class="${rowCls}">
           <td class="sticky-col" data-col="0">${dateHtml}</td>
@@ -1676,6 +1712,344 @@ function renderEmployeeList(){
     `;
 
     return `${thead}<tbody>${rows}</tbody>${tfoot}`;
+  }
+
+  const SHIFT_IWD = 'IWD';
+  const SHIFT_TD = 'TD';
+  const SHIFT_REST = '/';
+
+  function normalizeToBlockStart(grid, r, c){
+    const v = grid?.[r]?.[c];
+    if (v === SHIFT_REST && c > 0){
+      const prev = grid?.[r]?.[c - 1];
+      if (prev === SHIFT_IWD) return { r, c: c - 1 };
+    }
+    return { r, c };
+  }
+
+  function getBlockAt(grid, r, c){
+    const pos = normalizeToBlockStart(grid, r, c);
+    r = pos.r; c = pos.c;
+
+    const v = grid?.[r]?.[c];
+
+    if (v === SHIFT_IWD){
+      const invalid = !grid?.[r] || (c + 1 >= grid[r].length);
+      return { r, c, len: 2, type: SHIFT_IWD, values: [SHIFT_IWD, SHIFT_REST], invalid };
+    }
+    if (v === SHIFT_TD){
+      return { r, c, len: 1, type: SHIFT_TD, values: [SHIFT_TD], invalid: false };
+    }
+
+    return { r, c, len: 0, type: 'EMPTY', values: [], invalid: false };
+  }
+
+  function key(r, c){
+    return `${r}:${c}`;
+  }
+
+  function hasShiftInColumn(grid, col, type, clearSet){
+    for (let r = 0; r < grid.length; r++){
+      const k = key(r, col);
+      if (clearSet.has(k)) continue;
+      const val = grid?.[r]?.[col];
+      if (val === type) return true;
+    }
+    return false;
+  }
+
+  function canPlaceBlock(grid, block, destR, destC, cellsThatWillBeClearedSet){
+    const row = grid?.[destR];
+    if (!row) return false;
+    if (destC < 0) return false;
+    if (destC + block.len - 1 >= row.length) return false;
+
+    if (block.type === SHIFT_IWD && hasShiftInColumn(grid, destC, SHIFT_IWD, cellsThatWillBeClearedSet)) return false;
+    if (block.type === SHIFT_TD && hasShiftInColumn(grid, destC, SHIFT_TD, cellsThatWillBeClearedSet)) return false;
+
+    for (let i = 0; i < block.len; i++){
+      const rr = destR;
+      const cc = destC + i;
+      const k = key(rr, cc);
+      const existing = grid?.[rr]?.[cc] ?? '';
+      const existingTrim = (typeof existing === 'string') ? existing.trim() : existing;
+
+      if (cellsThatWillBeClearedSet.has(k)) continue;
+
+      if (existingTrim === '' || existingTrim == null) continue;
+
+      return false;
+    }
+    return true;
+  }
+
+  function getCurrentPlanGrid(){
+    const res = state.lastResultByMonth[state.month];
+    if (!res || !Array.isArray(res.employees) || !Array.isArray(res.days)) return null;
+
+    const rows = res.employees.length;
+    const cols = res.days.length;
+    const grid = Array.from({ length: rows }, () => Array(cols).fill(''));
+
+    for (let r = 0; r < rows; r++){
+      const emp = res.employees[r];
+      for (let c = 0; c < cols; c++){
+        grid[r][c] = getPlanCellValue(res, emp.id, c) || '';
+      }
+    }
+
+    return grid;
+  }
+
+  function setCurrentPlanGrid(newGrid){
+    const res = state.lastResultByMonth[state.month];
+    if (!res || !Array.isArray(res.employees) || !Array.isArray(res.days)) return;
+
+    const cols = res.days.length;
+    const schedule = { iwd: Array(cols).fill(null), td: Array(cols).fill(null) };
+    const forcedOff = {};
+
+    for (const emp of res.employees){
+      forcedOff[emp.id] = Array(cols).fill(false);
+    }
+
+    for (let r = 0; r < newGrid.length; r++){
+      const emp = res.employees[r];
+      if (!emp) continue;
+      for (let c = 0; c < cols; c++){
+        const val = newGrid?.[r]?.[c];
+        if (val === SHIFT_IWD){
+          schedule.iwd[c] = emp.id;
+          if (c + 1 < cols){
+            forcedOff[emp.id][c + 1] = true;
+          }
+        } else if (val === SHIFT_TD){
+          schedule.td[c] = emp.id;
+        } else if (val === SHIFT_REST){
+          forcedOff[emp.id][c] = true;
+        }
+      }
+    }
+
+    res.schedule = schedule;
+    res.forcedOff = forcedOff;
+
+    const summary = buildMonthSummary({
+      monthKey: res.monthKey,
+      days: res.days,
+      segments: res.segments,
+      employees: res.employees,
+      schedule,
+      forcedOff,
+    });
+
+    res.monthSummaryByEmpId = summary.summaryByEmpId || {};
+    res.empById = summary.empById || {};
+
+    state.lastResultByMonth[state.month] = res;
+  }
+
+  function trySwapBlocks(srcCell, dstCell){
+    const grid = getCurrentPlanGrid();
+    if (!grid) return { ok: false, error: 'Plan nicht gefunden.' };
+
+    if (!grid[srcCell.r] || !grid[dstCell.r]){
+      return { ok: false, error: 'Tausch nicht möglich – Konflikt mit einem anderen Dienst.' };
+    }
+    if (
+      srcCell.c < 0 || dstCell.c < 0
+      || srcCell.c >= grid[srcCell.r].length
+      || dstCell.c >= grid[dstCell.r].length
+    ){
+      return { ok: false, error: 'Tausch nicht möglich – Konflikt mit einem anderen Dienst.' };
+    }
+
+    const src0 = normalizeToBlockStart(grid, srcCell.r, srcCell.c);
+    const dst0 = normalizeToBlockStart(grid, dstCell.r, dstCell.c);
+
+    const srcB = getBlockAt(grid, src0.r, src0.c);
+    const dstB = getBlockAt(grid, dst0.r, dst0.c);
+
+    if (srcB.type === 'EMPTY' || srcB.invalid) return { ok: false, error: 'Tausch nicht möglich – Konflikt mit einem anderen Dienst.' };
+    if (dstB.invalid) return { ok: false, error: 'Tausch nicht möglich – Konflikt mit einem anderen Dienst.' };
+
+    if (srcB.r === dstB.r && srcB.c === dstB.c) return { ok: true };
+
+    const clearSet = new Set();
+    for (let i = 0; i < srcB.len; i++) clearSet.add(key(srcB.r, srcB.c + i));
+    for (let i = 0; i < dstB.len; i++) clearSet.add(key(dstB.r, dstB.c + i));
+
+    if (!canPlaceBlock(grid, srcB, dstB.r, dstB.c, clearSet)){
+      return { ok: false, error: 'Tausch nicht möglich – Konflikt mit einem anderen Dienst.' };
+    }
+
+    if (!canPlaceBlock(grid, dstB, srcB.r, srcB.c, clearSet)){
+      return { ok: false, error: 'Tausch nicht möglich – Konflikt mit einem anderen Dienst.' };
+    }
+
+    const newGrid = grid.map(row => row.slice());
+
+    clearSet.forEach(k => {
+      const [rr, cc] = k.split(':').map(Number);
+      if (newGrid?.[rr]) newGrid[rr][cc] = '';
+    });
+
+    for (let i = 0; i < srcB.len; i++){
+      newGrid[dstB.r][dstB.c + i] = srcB.values[i];
+    }
+
+    for (let i = 0; i < dstB.len; i++){
+      newGrid[srcB.r][srcB.c + i] = dstB.values[i];
+    }
+
+    setCurrentPlanGrid(newGrid);
+
+    return { ok: true };
+  }
+
+  function rerenderPlanAndPersist(){
+    renderOutput();
+    applyViewSettings();
+    saveState();
+    decoratePlanCellsForDnD();
+  }
+
+  function showToast(msg){
+    const el = document.getElementById('toast');
+    if (!el){
+      alert(msg);
+      return;
+    }
+
+    el.textContent = msg;
+    el.classList.add('is-visible');
+
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('is-visible'), 2500);
+  }
+
+  function decoratePlanCellsForDnD(){
+    const planEl = document.getElementById('planTable') || document.querySelector('.plan');
+    if (!planEl) return;
+
+    planEl.classList.toggle('is-editing', isEditMode);
+
+    const cells = planEl.querySelectorAll('.plan-cell');
+    cells.forEach(cell => {
+      cell.classList.remove('is-draggable', 'is-drop-target');
+      cell.removeAttribute('draggable');
+
+      if (!isEditMode) return;
+
+      const val = (cell.dataset.val || cell.textContent || '').trim();
+      if (val === SHIFT_IWD || val === SHIFT_TD){
+        cell.classList.add('is-draggable');
+        cell.setAttribute('draggable', 'true');
+      }
+    });
+  }
+
+  function getCellFromEvent(e){
+    const el = e.target;
+    return el && el.closest ? el.closest('.plan-cell') : null;
+  }
+
+  function onPlanDragStart(e){
+    if (!isEditMode) return;
+
+    const cell = getCellFromEvent(e);
+    if (!cell) return;
+
+    const val = (cell.dataset.val || cell.textContent || '').trim();
+    if (val !== SHIFT_IWD && val !== SHIFT_TD){
+      e.preventDefault();
+      return;
+    }
+
+    const r = Number(cell.dataset.r);
+    const c = Number(cell.dataset.c);
+    if (!Number.isFinite(r) || !Number.isFinite(c)) return;
+
+    dragPayload = { r, c };
+
+    try {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', JSON.stringify(dragPayload));
+    } catch (_err) {
+      // ignore
+    }
+  }
+
+  function onPlanDragOver(e){
+    if (!isEditMode || !dragPayload) return;
+    const cell = getCellFromEvent(e);
+    if (!cell) return;
+
+    e.preventDefault();
+    cell.classList.add('is-drop-target');
+  }
+
+  function onPlanDragLeave(e){
+    const cell = getCellFromEvent(e);
+    cell?.classList.remove('is-drop-target');
+  }
+
+  function onPlanDragEnd(){
+    dragPayload = null;
+    const planEl = document.getElementById('planTable') || document.querySelector('.plan');
+    planEl?.querySelectorAll('.is-drop-target')?.forEach(el => el.classList.remove('is-drop-target'));
+  }
+
+  function onPlanDrop(e){
+    if (!isEditMode) return;
+    e.preventDefault();
+
+    const planEl = document.getElementById('planTable') || document.querySelector('.plan');
+    planEl?.querySelectorAll('.is-drop-target')?.forEach(el => el.classList.remove('is-drop-target'));
+
+    const targetCell = getCellFromEvent(e);
+    if (!targetCell) return;
+
+    let src = dragPayload;
+    if (!src){
+      try {
+        src = JSON.parse(e.dataTransfer.getData('text/plain'));
+      } catch (_err) {
+        src = null;
+      }
+    }
+    if (!src) return;
+
+    const dst = { r: Number(targetCell.dataset.r), c: Number(targetCell.dataset.c) };
+    if (!Number.isFinite(dst.r) || !Number.isFinite(dst.c)) return;
+
+    const res = trySwapBlocks(src, dst);
+    if (!res.ok){
+      showToast(res.error || 'Tausch nicht möglich – Konflikt mit einem anderen Dienst.');
+      return;
+    }
+
+    rerenderPlanAndPersist();
+    dragPayload = null;
+  }
+
+  function toggleEditMode(){
+    isEditMode = !isEditMode;
+
+    const btn = document.getElementById('btnEditPlan');
+    if (btn){
+      btn.classList.toggle('is-active', isEditMode);
+      btn.setAttribute('aria-pressed', String(isEditMode));
+    }
+
+    const planEl = document.getElementById('planTable') || document.querySelector('.plan');
+    if (planEl) planEl.classList.toggle('is-editing', isEditMode);
+
+    if (!isEditMode){
+      dragPayload = null;
+    }
+
+    decoratePlanCellsForDnD();
   }
 
   function renderHoursTable(res){
@@ -4327,6 +4701,10 @@ blockTableEl.addEventListener('click', (ev) => {
     }
     window.print();
   });
+
+  if (editPlanBtn){
+    editPlanBtn.addEventListener('click', () => toggleEditMode());
+  }
 
   exportBtn.addEventListener('click', () => {
     const payload = JSON.stringify(state, null, 2);
