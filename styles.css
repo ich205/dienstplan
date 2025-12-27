@@ -781,13 +781,31 @@ body.fullscreen-plan .fullscreen-actions{
   margin: 8px 0 14px 0;
 }
 
+.plan-legend .legend-top{
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .plan-legend .legend-title{
   font-weight: 700;
   font-size: 14px;
   color: var(--muted);
 }
 
+.plan-legend .legend-actions{
+  display: flex;
+  align-items: center;
+}
+
+.plan-legend .legend-actions .btn{
+  margin: 0;
+}
+
 .plan-legend .legend-items{
+  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
