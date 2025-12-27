@@ -310,6 +310,16 @@ body:not(.scroll-containers) .table thead th{
   background: rgba(255,255,255,.03);
 }
 
+.table .total-row th,
+.table .total-row td{
+  font-weight: 700;
+  background: rgba(255,255,255,.04);
+}
+
+.table .total-row th{
+  color: var(--text);
+}
+
 .cell-flex{
   display:flex;
   gap: 8px;
