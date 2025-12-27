@@ -89,9 +89,6 @@
               <button class="btn" id="clearBtn" type="button">Ausgabe leeren</button>
               <button class="btn soft-abort hidden" id="softAbortBtn" type="button">Best so far</button>
             </div>
-            <button id="btnEditPlan" class="btn btn-edit" type="button" aria-pressed="false">
-              Bearbeiten
-            </button>
             <button class="btn" id="printBtn" type="button" title="Druckt den generierten Dienstplan" disabled>Drucken</button>
           </div>
 
@@ -233,7 +230,15 @@
         </section>
 
         <section class="card" id="planSection">
-          <h2 class="screen-only">Dienstplan</h2>
+          <div class="plan-toolbar">
+            <div class="plan-title">
+              <h2 class="screen-only">Dienstplan</h2>
+              <div class="plan-toolbar-hint screen-only">Bearbeitung bezieht sich auf die Tabelle unten.</div>
+            </div>
+            <button id="btnEditPlan" class="btn btn-edit" type="button" aria-pressed="false">
+              Bearbeiten
+            </button>
+          </div>
           <div class="fullscreen-actions" aria-live="polite">
             <button class="btn" id="exitFullscreenBtn" type="button">Vollbild beenden</button>
           </div>
