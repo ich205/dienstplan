@@ -1076,6 +1076,7 @@
   const messagesEl = $('#messages');
   const printHeaderEl = $('#printHeader');
   const planTableEl = $('#planTable');
+  const planLegendEl = $('#planLegend');
   const hoursTableEl = $('#hoursTable');
   const hoursNotesEl = $('#hoursNotes');
   const printHoursNotesEl = $('#printHoursNotes');
@@ -1598,6 +1599,11 @@ function renderEmployeeList(){
     planTableEl.addEventListener('dragend', onPlanDragEnd);
   }
 
+  if (planLegendEl){
+    planLegendEl.addEventListener('dragstart', onLegendDragStart);
+    planLegendEl.addEventListener('dragend', onLegendDragEnd);
+  }
+
   function getPlanCellValue(res, empId, dayIdx){
     const monthKey = res.monthKey;
     const day = res.days[dayIdx];
@@ -1690,7 +1696,7 @@ function renderEmployeeList(){
       }).join('');
       return `
         <tr class="${rowCls}">
-          <td class="sticky-col" data-col="0">${dateHtml}</td>
+          <td class="sticky-col" data-col="0" data-date="${escapeHtml(day.iso)}">${dateHtml}</td>
           ${cells}
         </tr>
       `;
@@ -1992,9 +1998,48 @@ function renderEmployeeList(){
     });
   }
 
+  function buildPalettePayloadFromEl(el){
+    if (!el) return null;
+    const type = (el.dataset.paletteType || '').toLowerCase();
+    const value = el.dataset.value;
+    if (!type || !value) return null;
+    return { kind: 'palette', type, value };
+  }
+
+  function resolveDragPayload(e){
+    if (dragPayload) return dragPayload;
+    if (!e || !e.dataTransfer) return null;
+    try {
+      const raw = e.dataTransfer.getData('text/plain');
+      return raw ? JSON.parse(raw) : null;
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  function onLegendDragStart(e){
+    const target = e.target && e.target.closest ? e.target.closest('.legend-item') : null;
+    const payload = buildPalettePayloadFromEl(target);
+    if (!payload) return;
+
+    dragPayload = payload;
+
+    try {
+      e.dataTransfer.effectAllowed = 'copy';
+      e.dataTransfer.setData('text/plain', JSON.stringify(payload));
+    } catch (_err) {
+      // ignore
+    }
+  }
+
+  function onLegendDragEnd(){
+    dragPayload = null;
+  }
+
   function getCellFromEvent(e){
     const el = e.target;
-    return el && el.closest ? el.closest('.plan-cell') : null;
+    if (!el || !el.closest) return null;
+    return el.closest('.plan-cell') || el.closest('td[data-date]');
   }
 
   function onPlanDragStart(e){
@@ -2014,7 +2059,7 @@ function renderEmployeeList(){
     if (!Number.isFinite(r) || !Number.isFinite(c)) return;
 
     // r = Mitarbeiter (Spalte), c = Tag (Zeile)
-    dragPayload = { row: c, col: r };
+    dragPayload = { kind: 'cell', row: c, col: r };
 
     try {
       e.dataTransfer.effectAllowed = 'move';
@@ -2025,7 +2070,8 @@ function renderEmployeeList(){
   }
 
   function onPlanDragOver(e){
-    if (!isEditMode || !dragPayload) return;
+    const payload = dragPayload || resolveDragPayload(e);
+    if (!isEditMode || !payload) return;
     const cell = getCellFromEvent(e);
     if (!cell) return;
 
@@ -2044,6 +2090,92 @@ function renderEmployeeList(){
     planEl?.querySelectorAll('.is-drop-target')?.forEach(el => el.classList.remove('is-drop-target'));
   }
 
+  function handlePaletteDrop(payload, targetCell){
+    if (!isEditMode){
+      showToast('Bitte zuerst den Bearbeiten-Modus aktivieren.');
+      return;
+    }
+
+    const res = state.lastResultByMonth[state.month];
+    if (!res){
+      showToast('Bitte zuerst einen Dienstplan generieren.');
+      return;
+    }
+
+    let dayIdx = Number(targetCell.dataset.c);
+    if (!Number.isFinite(dayIdx)){
+      const iso = targetCell.dataset.date;
+      dayIdx = res.days?.findIndex?.(d => d.iso === iso);
+    }
+
+    const empIdx = Number(targetCell.dataset.r);
+
+    const day = Number.isFinite(dayIdx) ? res.days?.[dayIdx] : null;
+    const emp = Number.isFinite(empIdx) ? res.employees?.[empIdx] : null;
+    if (!day || (!emp && payload.type !== 'special')) return;
+
+    if (payload.type === 'special'){
+      setSpecialDay(res.monthKey, day.iso, payload.value);
+      rerenderPlanAndPersist();
+      return;
+    }
+
+    if (payload.type === 'block'){
+      const blockVal = payload.value === BLOCK.FREEH ? BLOCK.FREEH
+        : (payload.value === BLOCK.WF ? BLOCK.WF : null);
+      if (!blockVal) return;
+
+      setBlock(res.monthKey, emp.id, day.iso, blockVal);
+
+      const grid = getCurrentPlanGrid();
+      if (grid){
+        const newGrid = grid.map(row => row.slice());
+        if (newGrid?.[empIdx]) newGrid[empIdx][dayIdx] = '';
+        setCurrentPlanGrid(newGrid);
+      }
+
+      rerenderPlanAndPersist();
+      return;
+    }
+
+    if (payload.type === 'shift'){
+      const grid = getCurrentPlanGrid();
+      if (!grid) return;
+
+      const block = payload.value === SHIFT_IWD
+        ? { r: empIdx, c: dayIdx, len: 2, type: SHIFT_IWD, values: [SHIFT_IWD, SHIFT_REST] }
+        : { r: empIdx, c: dayIdx, len: 1, type: SHIFT_TD, values: [SHIFT_TD] };
+
+      const clearSet = new Set();
+      for (let i = 0; i < block.len; i++) clearSet.add(key(block.r, block.c + i));
+
+      const existing = findFirstBlockInColumn(grid, dayIdx);
+      if (existing && existing.type === block.type){
+        for (let i = 0; i < existing.len; i++) clearSet.add(key(existing.r, existing.c + i));
+      }
+
+      if (!canPlaceBlock(grid, block, block.r, block.c, clearSet)){
+        showToast('Platzierung nicht möglich – Tag bereits belegt.');
+        return;
+      }
+
+      const newGrid = grid.map(row => row.slice());
+      clearSet.forEach(k => {
+        const [r, c] = k.split(':').map(Number);
+        if (newGrid?.[r]) newGrid[r][c] = '';
+      });
+
+      setBlock(res.monthKey, emp.id, day.iso, BLOCK.NONE);
+
+      for (let i = 0; i < block.len; i++){
+        if (newGrid?.[block.r]) newGrid[block.r][block.c + i] = block.values[i];
+      }
+
+      setCurrentPlanGrid(newGrid);
+      rerenderPlanAndPersist();
+    }
+  }
+
   function onPlanDrop(e){
     if (!isEditMode) return;
     e.preventDefault();
@@ -2054,15 +2186,16 @@ function renderEmployeeList(){
     const targetCell = getCellFromEvent(e);
     if (!targetCell) return;
 
-    let src = dragPayload;
-    if (!src){
-      try {
-        src = JSON.parse(e.dataTransfer.getData('text/plain'));
-      } catch (_err) {
-        src = null;
-      }
+    const payload = resolveDragPayload(e);
+    if (!payload) return;
+
+    if (payload.kind === 'palette'){
+      handlePaletteDrop(payload, targetCell);
+      dragPayload = null;
+      return;
     }
-    if (!src) return;
+
+    const src = payload;
 
     const dst = { row: Number(targetCell.dataset.c), col: Number(targetCell.dataset.r) };
     if (!Number.isFinite(dst.row) || !Number.isFinite(dst.col)) return;

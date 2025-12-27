@@ -239,6 +239,19 @@
           </div>
           <div id="messages" aria-live="polite"></div>
 
+          <div class="plan-legend">
+            <div class="legend-title">Legende</div>
+            <div class="legend-items" id="planLegend" aria-label="Dienste per Drag &amp; Drop in den Plan ziehen">
+              <span class="badge freeh legend-item" draggable="true" data-palette-type="block" data-value="FREEH">Urlaub</span>
+              <span class="badge wf legend-item" draggable="true" data-palette-type="block" data-value="WF">WF</span>
+              <span class="badge iwd legend-item" draggable="true" data-palette-type="shift" data-value="IWD">IWD</span>
+              <span class="badge td legend-item" draggable="true" data-palette-type="shift" data-value="TD">TD</span>
+              <span class="badge sv legend-item" draggable="true" data-palette-type="special" data-value="SV">SV</span>
+              <span class="badge team legend-item" draggable="true" data-palette-type="special" data-value="TEAM">Team</span>
+            </div>
+            <div class="legend-hint">Dienste aus der Legende im Bearbeitungsmodus in den Plan ziehen.</div>
+          </div>
+
           <div class="table-scroll">
             <table class="table plan-table plan" id="planTable"></table>
           </div>
