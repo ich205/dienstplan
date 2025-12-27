@@ -2304,7 +2304,7 @@ function renderEmployeeList(){
           <th>Korrektur*</th>
           <th>Ziel Vertrag</th>
           <th>Ziel inkl. Konto</th>
-          <th>Gutschrift</th>
+          <th>Gutschrift (Urlaub, SV &amp; Team)</th>
           <th>IWD</th>
           <th>TD</th>
           <th>Arbeitsstunden</th>

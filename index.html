@@ -235,9 +235,6 @@
               <h2 class="screen-only">Dienstplan</h2>
               <div class="plan-toolbar-hint screen-only">Bearbeitung bezieht sich auf die Tabelle unten.</div>
             </div>
-            <button id="btnEditPlan" class="btn btn-edit" type="button" aria-pressed="false">
-              Bearbeiten
-            </button>
           </div>
           <div class="fullscreen-actions" aria-live="polite">
             <button class="btn" id="exitFullscreenBtn" type="button">Vollbild beenden</button>
@@ -245,7 +242,14 @@
           <div id="messages" aria-live="polite"></div>
 
           <div class="plan-legend">
-            <div class="legend-title">Legende</div>
+            <div class="legend-top">
+              <div class="legend-title">Legende</div>
+              <div class="legend-actions screen-only">
+                <button id="btnEditPlan" class="btn btn-edit" type="button" aria-pressed="false">
+                  Bearbeiten
+                </button>
+              </div>
+            </div>
             <div class="legend-items" id="planLegend" aria-label="Dienste per Drag &amp; Drop in den Plan ziehen">
               <span class="badge freeh legend-item" draggable="true" data-palette-type="block" data-value="FREEH">Urlaub</span>
               <span class="badge wf legend-item" draggable="true" data-palette-type="block" data-value="WF">WF</span>
