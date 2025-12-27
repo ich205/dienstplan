@@ -1082,6 +1082,7 @@
   const hoursTableEl = $('#hoursTable');
   const hoursNotesEl = $('#hoursNotes');
   const printHoursNotesEl = $('#printHoursNotes');
+  const refreshHoursBtn = $('#refreshHoursBtn');
 
   // ---------- Progress helpers ----------
   function setProgressVisible(visible){
@@ -1873,6 +1874,18 @@ function renderEmployeeList(){
     res.empById = summary.empById || {};
 
     state.lastResultByMonth[state.month] = res;
+  }
+
+  function refreshHoursFromCurrentPlan(){
+    const grid = getCurrentPlanGrid();
+
+    if (!grid){
+      alert('Noch kein Dienstplan vorhanden. Bitte zuerst generieren.');
+      return;
+    }
+
+    setCurrentPlanGrid(grid);
+    rerenderPlanAndPersist();
   }
 
   function tryMoveBlock(grid, block, dest){
@@ -4942,6 +4955,10 @@ blockTableEl.addEventListener('click', (ev) => {
 
   if (editPlanBtn){
     editPlanBtn.addEventListener('click', () => toggleEditMode());
+  }
+
+  if (refreshHoursBtn){
+    refreshHoursBtn.addEventListener('click', () => refreshHoursFromCurrentPlan());
   }
 
   exportBtn.addEventListener('click', () => {
