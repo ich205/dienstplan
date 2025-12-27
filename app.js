@@ -1868,6 +1868,7 @@ function renderEmployeeList(){
 
     const clearSet = new Set();
     for (let i = 0; i < block.len; i++) clearSet.add(key(block.r, block.c + i));
+    for (let i = 0; i < block.len; i++) clearSet.add(key(dest.r, dest.c + i));
 
     if (!canPlaceBlock(grid, block, dest.r, dest.c, clearSet)){
       return { ok: false, error: 'Tausch nicht möglich – Konflikt mit einem anderen Dienst.' };
@@ -1895,6 +1896,8 @@ function renderEmployeeList(){
     const clearSet = new Set();
     for (let i = 0; i < aBlock.len; i++) clearSet.add(key(aBlock.r, aBlock.c + i));
     for (let i = 0; i < bBlock.len; i++) clearSet.add(key(bBlock.r, bBlock.c + i));
+    for (let i = 0; i < aBlock.len; i++) clearSet.add(key(bBlock.r, bBlock.c + i));
+    for (let i = 0; i < bBlock.len; i++) clearSet.add(key(aBlock.r, aBlock.c + i));
 
     if (!canPlaceBlock(grid, aBlock, bBlock.r, bBlock.c, clearSet)){
       return { ok: false, error: 'Tausch nicht möglich – Konflikt mit einem anderen Dienst.' };
