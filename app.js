@@ -1748,6 +1748,20 @@ function renderEmployeeList(){
     return `${r}:${c}`;
   }
 
+  function findFirstBlockInColumn(grid, col, { ignore } = {}){
+    for (let r = 0; r < grid.length; r++){
+      const block = getBlockAt(grid, r, col);
+      if (block.invalid || block.type === 'EMPTY') continue;
+
+      const isIgnored = ignore && ignore.r === block.r && ignore.c === block.c;
+      if (isIgnored) continue;
+
+      return block;
+    }
+
+    return null;
+  }
+
   function hasShiftInColumn(grid, col, type, clearSet){
     for (let r = 0; r < grid.length; r++){
       const k = key(r, col);
@@ -2051,6 +2065,16 @@ function renderEmployeeList(){
       res = trySwapBlocks(grid, srcBlock, dstBlock);
     } else {
       res = tryMoveBlock(grid, srcBlock, dstStart);
+
+      // Fallback: allow 1:1 Tausch mit bestehendem Dienst in der Zielspalte
+      // (z.B. IWD ↔ IWD), auch wenn der direkte Move wegen Spaltenregeln
+      // scheitern würde.
+      if ((!res.ok || !res.grid) && srcBlock.type !== 'EMPTY'){
+        const candidate = findFirstBlockInColumn(grid, dstStart.c, { ignore: srcBlock });
+        if (candidate){
+          res = trySwapBlocks(grid, srcBlock, candidate);
+        }
+      }
     }
 
     if (!res.ok || !res.grid){
