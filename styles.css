@@ -754,6 +754,25 @@ body.fullscreen-plan .fullscreen-actions{
   background: rgba(255,140,0,.12);
 }
 
+.plan-toolbar{
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 4px 0 12px 0;
+}
+
+.plan-title h2{
+  margin: 0;
+}
+
+.plan-toolbar-hint{
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .plan-legend{
   display: grid;
   grid-template-columns: auto 1fr;
