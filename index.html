@@ -89,6 +89,9 @@
               <button class="btn" id="clearBtn" type="button">Ausgabe leeren</button>
               <button class="btn soft-abort hidden" id="softAbortBtn" type="button">Best so far</button>
             </div>
+            <button id="btnEditPlan" class="btn btn-edit" type="button" aria-pressed="false">
+              Bearbeiten
+            </button>
             <button class="btn" id="printBtn" type="button" title="Druckt den generierten Dienstplan" disabled>Drucken</button>
           </div>
 
@@ -237,9 +240,11 @@
           <div id="messages" aria-live="polite"></div>
 
           <div class="table-scroll">
-            <table class="table plan-table" id="planTable"></table>
+            <table class="table plan-table plan" id="planTable"></table>
           </div>
         </section>
+
+        <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
         <section class="card" id="hoursSection">
           <details class="card-details">
