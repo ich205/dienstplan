@@ -1834,14 +1834,18 @@ function renderEmployeeList(){
         const val = newGrid?.[r]?.[c];
         if (val === SHIFT_IWD){
           schedule.iwd[c] = emp.id;
-          if (c + 1 < cols){
-            forcedOff[emp.id][c + 1] = true;
-          }
         } else if (val === SHIFT_TD){
           schedule.td[c] = emp.id;
-        } else if (val === SHIFT_REST){
-          forcedOff[emp.id][c] = true;
         }
+      }
+    }
+
+    // Der Pflicht-Freitags-Tag "/" ergibt sich ausschließlich aus den IWD-Zuordnungen.
+    for (let dayIdx = 0; dayIdx < cols; dayIdx++){
+      const iwdEmpId = schedule.iwd[dayIdx];
+      if (!iwdEmpId) continue;
+      if (dayIdx + 1 < cols){
+        forcedOff[iwdEmpId][dayIdx + 1] = true;
       }
     }
 
