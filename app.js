@@ -1861,14 +1861,15 @@ function renderEmployeeList(){
     res.schedule = schedule;
     res.forcedOff = forcedOff;
 
-    const summary = buildMonthSummary({
+    const ctx = buildMonthContext({
       monthKey: res.monthKey,
       days: res.days,
       segments: res.segments,
       employees: res.employees,
-      schedule,
-      forcedOff,
+      settings: res.settings || state.settings,
     });
+
+    const summary = buildMonthSummaryCtx(ctx, schedule, forcedOff);
 
     res.monthSummaryByEmpId = summary.summaryByEmpId || {};
     res.empById = summary.empById || {};
