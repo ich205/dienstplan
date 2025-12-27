@@ -628,6 +628,8 @@
   let state = loadState();
   let isEditMode = false;
   let dragPayload = null; // { r, c }
+  let dragDropHandled = false;
+  let lastDraggedCell = null;
   let toastTimer = null;
 
   function saveState(){
@@ -2060,6 +2062,8 @@ function renderEmployeeList(){
 
     // r = Mitarbeiter (Spalte), c = Tag (Zeile)
     dragPayload = { kind: 'cell', row: c, col: r };
+    dragDropHandled = false;
+    lastDraggedCell = { row: c, col: r };
 
     try {
       e.dataTransfer.effectAllowed = 'move';
@@ -2085,7 +2089,28 @@ function renderEmployeeList(){
   }
 
   function onPlanDragEnd(){
+    const shouldDeleteDraggedCell = !dragDropHandled && lastDraggedCell;
+
+    if (shouldDeleteDraggedCell){
+      const grid = getCurrentPlanGrid();
+      if (grid){
+        const { row, col } = lastDraggedCell;
+        const block = getBlockAt(grid, col, row);
+        const newGrid = grid.map(r => r.slice());
+
+        for (let i = 0; i < block.len; i++){
+          if (newGrid?.[block.r]) newGrid[block.r][block.c + i] = '';
+        }
+
+        setCurrentPlanGrid(newGrid);
+        rerenderPlanAndPersist();
+      }
+    }
+
     dragPayload = null;
+    dragDropHandled = false;
+    lastDraggedCell = null;
+
     const planEl = document.getElementById('planTable') || document.querySelector('.plan');
     planEl?.querySelectorAll('.is-drop-target')?.forEach(el => el.classList.remove('is-drop-target'));
   }
@@ -2179,6 +2204,7 @@ function renderEmployeeList(){
   function onPlanDrop(e){
     if (!isEditMode) return;
     e.preventDefault();
+    dragDropHandled = true;
 
     const planEl = document.getElementById('planTable') || document.querySelector('.plan');
     planEl?.querySelectorAll('.is-drop-target')?.forEach(el => el.classList.remove('is-drop-target'));
@@ -2192,6 +2218,7 @@ function renderEmployeeList(){
     if (payload.kind === 'palette'){
       handlePaletteDrop(payload, targetCell);
       dragPayload = null;
+      lastDraggedCell = null;
       return;
     }
 
@@ -2229,6 +2256,7 @@ function renderEmployeeList(){
     setCurrentPlanGrid(newGrid);
     rerenderPlanAndPersist();
     dragPayload = null;
+    lastDraggedCell = null;
   }
 
   function toggleEditMode(){
