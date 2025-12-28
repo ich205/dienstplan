@@ -1285,15 +1285,18 @@
     `.trim();
   }
 
-  function deltaBadgeHtml(delta){
+  function deltaBadgeHtml(delta, { display = null, colorBy = null } = {}){
     // Kleine Visualisierung für +/- Abweichung (zum Ziel inkl. Konto)
-    const d = round1(Number(delta || 0));
+    const dColor = round1(Number(colorBy !== null ? colorBy : delta || 0));
+    const dDisplay = round1(Number(display !== null ? display : delta || 0));
+
     let cls = 'ok';
-    if (d >= -10 && d <= 4) cls = 'ok';
-    else if (d >= -20 && d <= 12) cls = 'warn';
+    if (dColor >= -10 && dColor <= 4) cls = 'ok';
+    else if (dColor >= -20 && dColor <= 12) cls = 'warn';
     else cls = 'danger';
-    const sign = d > 0 ? '+' : '';
-    return `<span class="badge ${cls}">${sign}${d}h</span>`;
+
+    const sign = dDisplay > 0 ? '+' : '';
+    return `<span class="badge ${cls}">${sign}${dDisplay}h</span>`;
   }
 
   function dowShort(dow){
@@ -2318,6 +2321,7 @@ function renderEmployeeList(){
     let totalContractTarget = 0;
     let totalDeltaDesired = 0;
     let totalBalanceEnd = 0;
+    let deltaCount = 0;
 
     const rows = employees.map(emp => {
       const s = res.monthSummaryByEmpId[emp.id];
@@ -2327,9 +2331,12 @@ function renderEmployeeList(){
       const balAdj = Number(s.balanceAdjust || 0);
       const balEnd = Number(s.balanceEnd || 0);
 
+      const deltaDesired = Number(s.deltaDesired || 0);
+
       totalContractTarget += Number(s.contractTargetHours || 0);
-      totalDeltaDesired += Number(s.deltaDesired || 0);
+      totalDeltaDesired += deltaDesired;
       totalBalanceEnd += balEnd;
+      deltaCount += 1;
 
       const balStartStr = `${balStart > 0 ? '+' : ''}${round1(balStart)}`;
       const balAdjStr = `${balAdj > 0 ? '+' : ''}${round1(balAdj)}`;
@@ -2357,6 +2364,7 @@ function renderEmployeeList(){
     }).join('');
 
     const totalBalEndStr = `${totalBalanceEnd > 0 ? '+' : ''}${round1(totalBalanceEnd)}`;
+    const avgDeltaDesired = deltaCount ? totalDeltaDesired / deltaCount : 0;
     const totalRow = `
       <tr class="total-row">
         <th>Summe</th>
@@ -2370,7 +2378,7 @@ function renderEmployeeList(){
         <td></td>
         <td></td>
         <td></td>
-        <td class="center">${deltaBadgeHtml(totalDeltaDesired)}</td>
+        <td class="center">${deltaBadgeHtml(totalDeltaDesired, { display: totalDeltaDesired, colorBy: avgDeltaDesired })}</td>
         <td class="num"><strong>${totalBalEndStr}</strong></td>
       </tr>
     `;
