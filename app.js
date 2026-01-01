@@ -78,6 +78,13 @@
     return `${formatDate(date)} ${hh}:${mm}`;
   }
 
+  function formatExportTimestamp(date){
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+    const hh = pad2(date.getHours());
+    const mm = pad2(date.getMinutes());
+    return `${pad2(date.getDate())}.${pad2(date.getMonth() + 1)}. ${hh}.${mm}`;
+  }
+
   function toISODate(date){
     const y = date.getFullYear();
     const m = pad2(date.getMonth() + 1);
@@ -5447,9 +5454,12 @@ self.onmessage = async (e) => {
     const blob = new Blob([payload], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
 
+    const timestamp = formatExportTimestamp(new Date());
+    const downloadName = timestamp ? `Dienstplan Speicherstand ${timestamp}.json` : 'Dienstplan Speicherstand.json';
+
     const a = document.createElement('a');
     a.href = url;
-    a.download = `dienstplan_state_${state.month}.json`;
+    a.download = downloadName;
     document.body.appendChild(a);
     a.click();
     a.remove();
