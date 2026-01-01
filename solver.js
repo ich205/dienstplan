@@ -173,6 +173,13 @@ function buildMonthContext({ monthKey, days, segments, employees, settings, bloc
     }
   });
 
+  const resolvedTdRequiredByDay = Array.isArray(tdRequiredByDay)
+    ? tdRequiredByDay.slice(0, N).map(Boolean)
+    : Array(N).fill(false);
+  const resolvedSpecialDayByDay = Array.isArray(specialDayByDay)
+    ? specialDayByDay.slice(0, N).map(normalizeSpecialDay)
+    : Array(N).fill(SPECIAL_DAY.NONE);
+
   const empDataById = {};
 
   for (const emp of employees){
@@ -181,6 +188,7 @@ function buildMonthContext({ monthKey, days, segments, employees, settings, bloc
 
     const blockByDay = Array(N);
     const creditByDay = Array(N);
+    const specialExpectedByDay = Array(N).fill(0);
     const allowedByDay = Array(N);
     const preferWorkByDay = Array(N);
 
@@ -189,15 +197,21 @@ function buildMonthContext({ monthKey, days, segments, employees, settings, bloc
       const blk = getBlockFromMap(blocksByEmpId, emp.id, day.iso);
       blockByDay[i] = blk;
       creditByDay[i] = (day.dow >= 1 && day.dow <= 5 && blockIsVacation(blk)) ? perWeekday : 0;
+      const specialDay = resolvedSpecialDayByDay[i];
+      if (specialDay && !blockIsVacation(blk)){
+        specialExpectedByDay[i] = getSpecialDayCredit(specialDay, { forcedOff: false });
+      }
       allowedByDay[i] = !(prefs.bannedDows && prefs.bannedDows.includes(day.dow));
       preferWorkByDay[i] = Boolean(prefs.preferWorkDows && prefs.preferWorkDows.includes(day.dow));
     }
 
     const segContractTarget = segments.map(seg => emp.weeklyHours * (seg.weekdaysCount / 5));
     const segCredit = segments.map(seg => seg.indices.reduce((sum, idx) => sum + (creditByDay[idx] || 0), 0));
+    const segSpecialExpected = segments.map(seg => seg.indices.reduce((sum, idx) => sum + (specialExpectedByDay[idx] || 0), 0));
 
     const monthContractTarget = segContractTarget.reduce((a,b) => a + b, 0);
     const monthCredit = segCredit.reduce((a,b) => a + b, 0);
+    const monthSpecialExpected = segSpecialExpected.reduce((a,b) => a + b, 0);
 
     const adjust = balanceMonthlyAdjustment(emp.balanceHours);
     const monthDesiredTarget = round1(Math.max(0, monthContractTarget + adjust));
@@ -214,7 +228,7 @@ function buildMonthContext({ monthKey, days, segments, employees, settings, bloc
       segDesiredTarget[last] = round1(Math.max(0, segDesiredTarget[last] + diff));
     }
 
-    const segRequired = segments.map((seg, si) => Math.max(0, segDesiredTarget[si] - segCredit[si]));
+    const segRequired = segments.map((seg, si) => Math.max(0, segDesiredTarget[si] - segCredit[si] - segSpecialExpected[si]));
     const monthRequired = segRequired.reduce((a,b) => a + b, 0);
 
     empDataById[emp.id] = {
@@ -223,15 +237,18 @@ function buildMonthContext({ monthKey, days, segments, employees, settings, bloc
       perWeekday,
       blockByDay,
       creditByDay,
+      specialExpectedByDay,
       allowedByDay,
       preferWorkByDay,
       segContractTarget,
       segCredit,
+      segSpecialExpected,
       segDesiredTarget,
       segRequired,
       monthContractTarget: round1(monthContractTarget),
       monthDesiredTarget: round1(monthDesiredTarget),
       monthCredit: round1(monthCredit),
+      monthSpecialExpected: round1(monthSpecialExpected),
       balanceStart: round1(Number(emp.balanceHours) || 0),
       balanceAdjust: round1(adjust),
       monthRequired: round1(monthRequired),
@@ -246,6 +263,14 @@ function buildMonthContext({ monthKey, days, segments, employees, settings, bloc
     return total;
   });
 
+  const segSpecialExpectedTotal = segments.map((seg, si) => {
+    let total = 0;
+    for (const emp of employees){
+      total += empDataById[emp.id]?.segSpecialExpected[si] || 0;
+    }
+    return total;
+  });
+
   const segUnderTarget = segments.map((seg, si) => {
     const baseIwd = seg.indices.length * SHIFT.IWD.hours;
     const required = segRequiredTotal[si] || 0;
@@ -253,13 +278,6 @@ function buildMonthContext({ monthKey, days, segments, employees, settings, bloc
   });
 
   const hasUnderTarget = segUnderTarget.some(Boolean);
-
-  const resolvedTdRequiredByDay = Array.isArray(tdRequiredByDay)
-    ? tdRequiredByDay.slice(0, N).map(Boolean)
-    : Array(N).fill(false);
-  const resolvedSpecialDayByDay = Array.isArray(specialDayByDay)
-    ? specialDayByDay.slice(0, N).map(normalizeSpecialDay)
-    : Array(N).fill(SPECIAL_DAY.NONE);
 
   return {
     monthKey,
@@ -271,6 +289,7 @@ function buildMonthContext({ monthKey, days, segments, employees, settings, bloc
     segIdByDay,
     empDataById,
     segRequiredTotal,
+    segSpecialExpectedTotal,
     segUnderTarget,
     hasUnderTarget,
     tdRequiredByDay: resolvedTdRequiredByDay,
@@ -1179,9 +1198,10 @@ async function solve(payload, { onProgress, signal, shouldCancel } = {}){
     const seg = segments[si];
     const segIndices = seg.indices;
     const totalRequired = Number(ctx.segRequiredTotal[si] || 0);
+    const expectedSpecial = Number(ctx.segSpecialExpectedTotal[si] || 0);
 
     const baseIwd = segIndices.length * SHIFT.IWD.hours;
-    const maxWithTd = baseIwd + segIndices.length * SHIFT.TD.hours;
+    const maxWithTd = baseIwd + segIndices.length * SHIFT.TD.hours + expectedSpecial;
 
     const first = days[segIndices[0]];
     const last = days[segIndices[segIndices.length - 1]];
@@ -1199,7 +1219,7 @@ async function solve(payload, { onProgress, signal, shouldCancel } = {}){
       messages.push({
         type: 'warn',
         title: 'Hinweis (Woche hat zu viele Soll-Stunden)',
-        details: `${label}: Soll-Arbeit ${round1(totalRequired)}h > Maximum mit TD ${maxWithTd}h → Unterdeckung ist in dieser Woche unvermeidbar.`,
+        details: `${label}: Soll-Arbeit ${round1(totalRequired)}h > Maximum mit TD + Sondergutschriften ${round1(maxWithTd)}h → Unterdeckung ist in dieser Woche unvermeidbar.`,
       });
     }
   }
