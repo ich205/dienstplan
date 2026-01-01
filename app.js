@@ -21,6 +21,18 @@
   const blockIsVacation = (blk) => blk === BLOCK.FREEH || blk === BLOCK.FOBI;
   const blockIsFree = (blk) => blk === BLOCK.FREE0 || blk === BLOCK.UNI || blk === BLOCK.SLASH;
 
+  function describeBlockValue(value){
+    switch (value){
+      case BLOCK.FREE0: return 'Frei';
+      case BLOCK.WF: return 'Wunschfrei';
+      case BLOCK.FREEH: return 'Urlaub';
+      case BLOCK.FOBI: return 'FoBi';
+      case BLOCK.UNI: return 'Uni';
+      case BLOCK.SLASH: return '/';
+      default: return 'Block';
+    }
+  }
+
   function getBlockCreditHours({ block, day, emp }){
     if (block === BLOCK.FOBI) return 8;
     if (block === BLOCK.FREEH && isWeekday(day.date)){
@@ -316,12 +328,13 @@
   function defaultState(){
     const month = monthKeyFromDate(new Date());
     return {
-      version: 4.4,
+      version: 4.5,
       month,
       employees: [],
       blocksByMonth: {},
       tdRequiredByMonth: {},
       specialDayByMonth: {},
+      pendingChangesByMonth: {},
       settings: {
         attempts: 10000,
         preferGaps: true,
@@ -614,6 +627,7 @@
         tdRequiredByMonth: safeRecord(parsed.tdRequiredByMonth),
         specialDayByMonth: safeRecord(parsed.specialDayByMonth),
         lastResultByMonth: safeRecord(parsed.lastResultByMonth),
+        pendingChangesByMonth: normalizePendingRecord(parsed.pendingChangesByMonth),
       };
 
       // Normalize month
@@ -646,6 +660,89 @@
   let dragDropHandled = false;
   let lastDraggedCell = null;
   let toastTimer = null;
+
+  function defaultPendingStatus(){
+    return { hasChanges: false, hasConflicts: false, entries: [] };
+  }
+
+  function normalizePendingEntry(entry){
+    if (!entry || typeof entry !== 'object') return null;
+    const text = typeof entry.text === 'string' ? entry.text : '';
+    if (!text) return null;
+    const title = typeof entry.title === 'string' && entry.title.trim() ? entry.title.trim() : 'Plan beachten';
+    const type = entry.type === 'danger' ? 'danger' : 'warn';
+    return { type, title, text };
+  }
+
+  function normalizePendingStatus(value){
+    const base = defaultPendingStatus();
+    if (!isPlainObject(value)) return base;
+    const entries = Array.isArray(value.entries)
+      ? value.entries.map(normalizePendingEntry).filter(Boolean)
+      : [];
+    return {
+      hasChanges: Boolean(value.hasChanges || value.hasConflicts || entries.length),
+      hasConflicts: Boolean(value.hasConflicts),
+      entries,
+    };
+  }
+
+  function normalizePendingRecord(value){
+    const record = safeRecord(value);
+    const out = {};
+    for (const [k, v] of Object.entries(record)){
+      out[k] = normalizePendingStatus(v);
+    }
+    return out;
+  }
+
+  function ensurePendingStatus(monthKey){
+    if (!state.pendingChangesByMonth[monthKey]){
+      state.pendingChangesByMonth[monthKey] = defaultPendingStatus();
+    } else {
+      state.pendingChangesByMonth[monthKey] = normalizePendingStatus(state.pendingChangesByMonth[monthKey]);
+    }
+    return state.pendingChangesByMonth[monthKey];
+  }
+
+  function clearPendingChanges(monthKey){
+    state.pendingChangesByMonth[monthKey] = defaultPendingStatus();
+  }
+
+  function getPendingStatus(monthKey){
+    return normalizePendingStatus(state.pendingChangesByMonth[monthKey]);
+  }
+
+  function appendPendingEntry(monthKey, { title, text, type = 'warn', conflict = false } = {}){
+    ensureMonthStructures(monthKey);
+    const status = ensurePendingStatus(monthKey);
+    status.hasChanges = true;
+    status.hasConflicts = Boolean(status.hasConflicts || conflict || type === 'danger');
+    if (text){
+      const entry = normalizePendingEntry({ title, text, type: conflict ? 'danger' : type });
+      if (entry){
+        status.entries.push(entry);
+        if (status.entries.length > 30){
+          status.entries = status.entries.slice(-30);
+        }
+      }
+    }
+  }
+
+  function knownMonthKeys(){
+    const set = new Set([state.month]);
+    [state.blocksByMonth, state.tdRequiredByMonth, state.specialDayByMonth, state.lastResultByMonth, state.pendingChangesByMonth]
+      .forEach(rec => {
+        Object.keys(rec || {}).forEach(k => set.add(k));
+      });
+    return Array.from(set);
+  }
+
+  function markAllMonthsPending({ title, text, type = 'warn' } = {}){
+    for (const mk of knownMonthKeys()){
+      appendPendingEntry(mk, { title, text, type });
+    }
+  }
 
   function saveState(){
     try{
@@ -974,6 +1071,7 @@
     if (!state.tdRequiredByMonth[monthKey]) state.tdRequiredByMonth[monthKey] = {};
     if (!state.specialDayByMonth[monthKey]) state.specialDayByMonth[monthKey] = {};
     if (!state.lastResultByMonth[monthKey]) state.lastResultByMonth[monthKey] = null;
+    ensurePendingStatus(monthKey);
   }
 
   ensureMonthStructures(state.month);
@@ -1001,6 +1099,15 @@
     } else {
       eb[isoDate] = value;
     }
+  }
+
+  function hasPlanCollisionForBlock(monthKey, empId, isoDate){
+    const res = state.lastResultByMonth[monthKey];
+    if (!res || !Array.isArray(res.days) || !res.schedule) return false;
+    const dayIdx = res.days.findIndex(d => d.iso === isoDate);
+    if (dayIdx === -1) return false;
+    const sched = res.schedule || {};
+    return sched.iwd?.[dayIdx] === empId || sched.td?.[dayIdx] === empId;
   }
 
   function countBlocks(monthKey, empId, value){
@@ -1096,6 +1203,7 @@
 
   const employeeListEl = $('#employeeList');
   const blockTableEl = $('#blockTable');
+  const sidebarAlertsEl = $('#sidebarAlerts');
 
   const messagesEl = $('#messages');
   const printHeaderEl = $('#printHeader');
@@ -1383,6 +1491,36 @@
   `;
 
 
+  function buildPendingAlertsHtml(status){
+    const pending = normalizePendingStatus(status);
+    if (!pending.hasChanges && !pending.hasConflicts) return '';
+
+    const entries = (pending.entries && pending.entries.length)
+      ? pending.entries
+      : [{
+        type: pending.hasConflicts ? 'danger' : 'warn',
+        title: pending.hasConflicts ? 'Konflikte mit bestehendem Plan' : 'Plan veraltet',
+        text: pending.hasConflicts
+          ? 'Neue Blocktage kollidieren mit bereits eingeplanten Diensten. Bitte Plan aktualisieren.'
+          : 'Daten wurden nach der letzten Planung geändert. Bitte Dienstplan neu generieren.',
+      }];
+
+    return entries.map(e => {
+      const cls = e.type === 'danger' ? 'danger' : 'warn';
+      const title = e.title || (cls === 'danger' ? 'Konflikt' : 'Hinweis');
+      const text = e.text || '';
+      return `<div class="msg ${cls}"><strong>${escapeHtml(title)}</strong><div>${escapeHtml(text)}</div></div>`;
+    }).join('');
+  }
+
+  function renderSidebarAlerts(){
+    if (!sidebarAlertsEl) return;
+    const html = buildPendingAlertsHtml(getPendingStatus(state.month));
+    sidebarAlertsEl.innerHTML = html;
+    sidebarAlertsEl.classList.toggle('hidden', !html);
+  }
+
+
   function renderAll(){
     // Inputs
     monthSelectEl.value = state.month;
@@ -1392,6 +1530,7 @@
     renderEmployeeList();
     renderBlockTable();
     renderOutput();
+    renderSidebarAlerts();
     applyViewSettings();
   }
 
@@ -1539,9 +1678,12 @@ function renderEmployeeList(){
   function renderOutput(){
     const monthKey = state.month;
     const res = state.lastResultByMonth[monthKey];
+    const pendingHtml = buildPendingAlertsHtml(getPendingStatus(monthKey));
+
+    if (messagesEl) messagesEl.classList.add('messages');
 
     if (!res){
-      messagesEl.innerHTML = `<div class="hint">Noch kein Dienstplan generiert.</div>`;
+      messagesEl.innerHTML = pendingHtml || `<div class="hint">Noch kein Dienstplan generiert.</div>`;
       planTableEl.innerHTML = '';
       hoursTableEl.innerHTML = '';
       if (hoursNotesEl) hoursNotesEl.innerHTML = '';
@@ -1554,14 +1696,19 @@ function renderEmployeeList(){
     }
 
     // Messages
+    const msgParts = [];
+    if (pendingHtml) msgParts.push(pendingHtml);
+
     if (!res.messages || res.messages.length === 0){
-      messagesEl.innerHTML = `<div class="msg"><strong>Info</strong> Plan wurde generiert.</div>`;
+      msgParts.push(`<div class="msg"><strong>Info</strong> Plan wurde generiert.</div>`);
     } else {
-      messagesEl.innerHTML = res.messages.map(m => {
+      msgParts.push(res.messages.map(m => {
         const cls = m.type === 'danger' ? 'danger' : (m.type === 'warn' ? 'warn' : '');
         return `<div class="msg ${cls}"><strong>${escapeHtml(m.title)}</strong><div>${escapeHtml(m.details)}</div></div>`;
-      }).join('');
+      }).join(''));
     }
+
+    messagesEl.innerHTML = msgParts.join('');
 
     planTableEl.innerHTML = renderPlanTable(res);
     hoursTableEl.innerHTML = renderHoursTable(res);
@@ -4776,6 +4923,12 @@ self.onmessage = async (e) => {
 
     state.employees.push(emp);
 
+    markAllMonthsPending({
+      title: 'Mitarbeiter hinzugefügt',
+      text: `${emp.name} angelegt – Plan ggf. neu berechnen.`,
+    });
+    showToast(`${emp.name} hinzugefügt.`);
+
     newEmpNameEl.value = '';
     newEmpNameEl.focus();
 
@@ -4792,6 +4945,9 @@ self.onmessage = async (e) => {
     const ok = confirm('Mitarbeiter wirklich entfernen? (Blockliste & Plan werden entsprechend angepasst)');
     if (!ok) return;
 
+    const removed = state.employees.find(e => e.id === empId);
+    const removedName = removed ? removed.name : 'Mitarbeiter';
+
     state.employees = state.employees.filter(e => e.id !== empId);
 
     // Remove blocks for this employee in all months
@@ -4801,13 +4957,11 @@ self.onmessage = async (e) => {
       }
     }
 
-    // Remove plan results for all months (safe)
-    for (const mk of Object.keys(state.lastResultByMonth)){
-      if (state.lastResultByMonth[mk]){
-        // do not try to partially remove; just clear
-        state.lastResultByMonth[mk] = null;
-      }
-    }
+    markAllMonthsPending({
+      title: 'Mitarbeiter geändert',
+      text: `${removedName} entfernt – bitte Plan neu berechnen.`,
+    });
+    showToast(`${removedName} entfernt – Plan prüfen.`);
 
     saveState();
     renderAll();
@@ -4828,6 +4982,7 @@ self.onmessage = async (e) => {
     const emp = state.employees.find(e => e.id === empId);
     if (!emp) return;
 
+    const prevWish = emp.wishText;
     emp.wishText = String(el.value || '');
     emp.prefs = sanitizePrefs({ ...emp.prefs, ...parseWishText(emp.wishText) });
 
@@ -4836,13 +4991,17 @@ self.onmessage = async (e) => {
       parsedEl.innerHTML = `<strong>Erkannt:</strong> ${escapeHtml(describePrefs(emp.prefs))}`;
     }
 
-    // Änderung an Mitarbeiterdaten => Ergebnisse verwerfen (sicher)
-    for (const mk of Object.keys(state.lastResultByMonth)){
-      state.lastResultByMonth[mk] = null;
+    if (emp.wishText !== prevWish){
+      markAllMonthsPending({
+        title: 'Sonderwunsch geändert',
+        text: `${emp.name}: Wünsche aktualisiert.`,
+      });
+      showToast(`Sonderwünsche für ${emp.name} geändert.`);
     }
 
     saveState();
     renderOutput();
+    renderSidebarAlerts();
   });
 
   // Name / Wochenstunden committen (Change = meistens Blur/Enter)
@@ -4860,23 +5019,41 @@ self.onmessage = async (e) => {
     const emp = state.employees.find(e => e.id === empId);
     if (!emp) return;
 
+    const prevName = emp.name;
+    const prevHours = emp.weeklyHours;
+    const prevBalance = emp.balanceHours;
+    const prevWish = emp.wishText;
+    let changeText = '';
+
     if (field === 'name'){
       emp.name = String(el.value || '').trim() || 'Unbenannt';
       el.value = emp.name;
+      if (emp.name !== prevName){
+        changeText = `Name geändert: ${prevName} → ${emp.name}`;
+      }
     } else if (field === 'weeklyHours'){
       emp.weeklyHours = round1(clamp(Number(el.value || 0), 0, 80));
       el.value = emp.weeklyHours;
+      if (emp.weeklyHours !== prevHours){
+        changeText = `Wochenstunden für ${emp.name} auf ${emp.weeklyHours}h geändert.`;
+      }
     } else if (field === 'balanceHours'){
       emp.balanceHours = round1(clamp(Number(el.value || 0), -10000, 10000));
       el.value = emp.balanceHours;
+      if (emp.balanceHours !== prevBalance){
+        changeText = `Stundenkonto für ${emp.name} auf ${emp.balanceHours}h gesetzt.`;
+      }
     } else if (field === 'wishText'){
       emp.wishText = String(el.value || '').trim();
       emp.prefs = sanitizePrefs({ ...emp.prefs, ...parseWishText(emp.wishText) });
+      if (emp.wishText !== prevWish){
+        changeText = `${emp.name}: Wünsche aktualisiert.`;
+      }
     }
 
-    // Änderung an Mitarbeiterdaten => Ergebnisse verwerfen (sicher)
-    for (const mk of Object.keys(state.lastResultByMonth)){
-      state.lastResultByMonth[mk] = null;
+    if (changeText){
+      markAllMonthsPending({ title: 'Mitarbeiter geändert', text: changeText });
+      showToast(changeText);
     }
 
     saveState();
@@ -4920,10 +5097,25 @@ blockTableEl.addEventListener('click', (ev) => {
       }
     }
 
+    const emp = state.employees.find(e => e.id === empId);
+    const empName = emp ? emp.name : 'Mitarbeiter';
+    const hadChange = current !== next;
+
     setBlock(state.month, empId, iso, next);
 
-    // Clear last result for this month (because inputs changed)
-    state.lastResultByMonth[state.month] = null;
+    if (hadChange){
+      const blockLabel = describeBlockValue(next || current);
+      const conflict = next !== BLOCK.NONE && hasPlanCollisionForBlock(state.month, empId, iso);
+      appendPendingEntry(state.month, {
+        title: conflict ? 'Block kollidiert mit Plan' : 'Blockliste geändert',
+        text: next === BLOCK.NONE
+          ? `${empName}: Block am ${iso} entfernt.`
+          : `${empName}: ${blockLabel} am ${iso} eingetragen.`,
+        type: conflict ? 'danger' : 'warn',
+        conflict,
+      });
+      showToast(`${empName}: ${next === BLOCK.NONE ? 'Block entfernt' : `${blockLabel} am ${iso}`}`);
+    }
 
     saveState();
     renderAll();
@@ -4938,21 +5130,30 @@ blockTableEl.addEventListener('click', (ev) => {
     const iso = (tdToggle || select).getAttribute('data-iso');
     if (!iso) return;
 
+    let changeText = '';
+
     if (tdToggle){
       setTdRequired(state.month, iso, tdToggle.checked);
+      changeText = tdToggle.checked
+        ? `TD-Pflicht am ${iso} gesetzt.`
+        : `TD-Pflicht am ${iso} entfernt.`;
     }
 
     if (select){
       const value = select.value || '';
       if (value === 'SV' || value === 'TEAM'){
         setSpecialDay(state.month, iso, value);
+        changeText = `${getSpecialDayLabel(value)}-Tag am ${iso} markiert.`;
       } else {
         setSpecialDay(state.month, iso, SPECIAL_DAY.NONE);
+        changeText = `Sondertag am ${iso} entfernt.`;
       }
     }
 
-    // Inputs changed -> Ergebnis für diesen Monat verwerfen
-    state.lastResultByMonth[state.month] = null;
+    if (changeText){
+      appendPendingEntry(state.month, { title: 'Pflichten geändert', text: changeText });
+      showToast(changeText);
+    }
 
     saveState();
     renderAll();
@@ -4968,6 +5169,10 @@ blockTableEl.addEventListener('click', (ev) => {
     const totalAttempts = normalizeAttempts(state.settings.attempts);
 
     try{
+      clearPendingChanges(state.month);
+      saveState();
+      renderSidebarAlerts();
+
       setSolveUiState(true);
 
       setProgressVisible(true);
@@ -4989,6 +5194,7 @@ blockTableEl.addEventListener('click', (ev) => {
       });
 
       state.lastResultByMonth[state.month] = res;
+      clearPendingChanges(state.month);
       saveState();
       renderAll();
     }catch(e){
@@ -5080,6 +5286,7 @@ blockTableEl.addEventListener('click', (ev) => {
         tdRequiredByMonth: safeRecord(obj.tdRequiredByMonth),
         specialDayByMonth: safeRecord(obj.specialDayByMonth),
         lastResultByMonth: safeRecord(obj.lastResultByMonth),
+        pendingChangesByMonth: normalizePendingRecord(obj.pendingChangesByMonth),
       };
 
       if (typeof state.month !== 'string' || !/^\d{4}-\d{2}$/.test(state.month)){
