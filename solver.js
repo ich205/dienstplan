@@ -60,6 +60,7 @@ function defaultEmpPrefs(){
     extraRestAfterIWD: 0,
     preferWorkDows: [],
     weekendBias: 0,
+    preferSpecialWithIwd: false,
     maxIwdPerWeek: null,
     maxTdPerWeek: null,
     maxIwdPerMonth: null,
@@ -99,6 +100,10 @@ function sanitizePrefs(prefs){
   let weekendBias = Number(('weekendBias' in p) ? p.weekendBias : base.weekendBias);
   if (![ -1, 0, 1 ].includes(weekendBias)) weekendBias = 0;
 
+  const preferSpecialWithIwd = ('preferSpecialWithIwd' in p)
+    ? Boolean(p.preferSpecialWithIwd)
+    : Boolean(base.preferSpecialWithIwd);
+
   const normLimit = (v) => {
     if (v === null || typeof v === 'undefined' || v === '') return null;
     const n = Math.round(Number(v));
@@ -121,6 +126,7 @@ function sanitizePrefs(prefs){
     extraRestAfterIWD,
     preferWorkDows,
     weekendBias,
+    preferSpecialWithIwd,
     maxIwdPerWeek,
     maxTdPerWeek,
     maxIwdPerMonth,
@@ -322,6 +328,10 @@ function scoreIwdCtx(ctx, empId, dayIdx, remainingWeek, remainingMonth, counts, 
 
   const day = ctx.days[dayIdx];
   const isWeekend = (day.dow === 0 || day.dow === 6);
+  const specialToday = ctx.specialDayByDay ? ctx.specialDayByDay[dayIdx] : SPECIAL_DAY.NONE;
+  const specialTomorrow = (dayIdx + 1 < ctx.N && ctx.specialDayByDay)
+    ? ctx.specialDayByDay[dayIdx + 1]
+    : SPECIAL_DAY.NONE;
 
   let score = 0;
 
@@ -348,6 +358,13 @@ function scoreIwdCtx(ctx, empId, dayIdx, remainingWeek, remainingMonth, counts, 
 
   if (ed.preferWorkByDay[dayIdx]) score += 120;
   if (dayIdx + 1 < ctx.N && ed.preferWorkByDay[dayIdx + 1]) score += 90;
+
+  if (prefs.preferSpecialWithIwd){
+    if (specialToday) score += 320;
+    if (specialTomorrow) score += 220;
+  } else {
+    if (specialToday) score += 30;
+  }
 
   if (prefs.maxIwdPerWeek != null && weekI >= prefs.maxIwdPerWeek) score -= 700;
   if (prefs.maxIwdPerMonth != null && iCount >= prefs.maxIwdPerMonth) score -= 900;
@@ -392,6 +409,7 @@ function scoreTdCtx(ctx, empId, dayIdx, remainingWeek, remainingMonth, counts, w
 
   const day = ctx.days[dayIdx];
   const isWeekend = (day.dow === 0 || day.dow === 6);
+  const specialToday = ctx.specialDayByDay ? ctx.specialDayByDay[dayIdx] : SPECIAL_DAY.NONE;
 
   let score = 0;
 
@@ -410,6 +428,10 @@ function scoreTdCtx(ctx, empId, dayIdx, remainingWeek, remainingMonth, counts, w
   if (prefs.weekendBias === -1 && isWeekend) score -= 50;
 
   if (ed.preferWorkByDay[dayIdx]) score += 80;
+
+  if (specialToday){
+    score -= prefs.preferSpecialWithIwd ? 420 : 120;
+  }
 
   if (prefs.maxTdPerWeek != null && weekT >= prefs.maxTdPerWeek) score -= 450;
   if (prefs.maxTdPerMonth != null && tCount >= prefs.maxTdPerMonth) score -= 650;
@@ -666,6 +688,7 @@ function evaluateAttemptCtx(ctx, attempt){
   for (let i = 0; i < N; i++){
     const iwdEmpId = schedule.iwd[i];
     const tdEmpId  = schedule.td[i];
+    const specialDay = ctx.specialDayByDay ? ctx.specialDayByDay[i] : SPECIAL_DAY.NONE;
 
     if (iwdEmpId && tdEmpId && iwdEmpId === tdEmpId) cost += COST.SAME_PERSON;
 
@@ -688,6 +711,12 @@ function evaluateAttemptCtx(ctx, attempt){
 
     checkOne(iwdEmpId, SHIFT.IWD);
     checkOne(tdEmpId, SHIFT.TD);
+
+    if (specialDay && tdEmpId){
+      const tdPrefs = ctx.empDataById[tdEmpId]?.prefs;
+      const penalty = tdPrefs?.preferSpecialWithIwd ? 180_000 : 40_000;
+      cost += penalty;
+    }
   }
 
   for (const emp of ctx.employees){
