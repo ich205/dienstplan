@@ -694,6 +694,39 @@
     };
   }
 
+  function pruneResolvedPendingConflicts(monthKey){
+    const res = state.lastResultByMonth[monthKey];
+    if (!res) return;
+
+    const status = ensurePendingStatus(monthKey);
+    if (!status.entries.length) return;
+
+    const empNameToId = {};
+    (res.employees || []).forEach(emp => {
+      if (emp?.name) empNameToId[emp.name] = emp.id;
+    });
+
+    status.entries = status.entries.filter(entry => {
+      if (!entry || entry.type !== 'danger' || typeof entry.text !== 'string') return true;
+
+      const match = entry.text.match(/^(.+?): .* am (\d{4}-\d{2}-\d{2}) eingetragen\.$/);
+      if (!match) return true;
+
+      const name = match[1].trim();
+      const iso = match[2];
+      const empId = empNameToId[name];
+
+      if (!empId) return true;
+
+      const block = getBlock(monthKey, empId, iso);
+      if (!block || block === BLOCK.NONE) return false;
+
+      return hasPlanCollisionForBlock(monthKey, empId, iso);
+    });
+
+    recalcPendingStatus(status);
+  }
+
   function normalizePendingRecord(value){
     const record = safeRecord(value);
     const out = {};
@@ -2082,6 +2115,8 @@ function renderEmployeeList(){
     res.empById = summary.empById || {};
 
     state.lastResultByMonth[state.month] = res;
+
+    pruneResolvedPendingConflicts(state.month);
   }
 
   function refreshHoursFromCurrentPlan(){
