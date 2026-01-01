@@ -66,6 +66,18 @@
   // ---------- Date helpers ----------
   function pad2(n){ return String(n).padStart(2, '0'); }
 
+  function formatDate(date){
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+    return `${pad2(date.getDate())}.${pad2(date.getMonth() + 1)}.${date.getFullYear()}`;
+  }
+
+  function formatDateTime(date){
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+    const hh = pad2(date.getHours());
+    const mm = pad2(date.getMinutes());
+    return `${formatDate(date)} ${hh}:${mm}`;
+  }
+
   function toISODate(date){
     const y = date.getFullYear();
     const m = pad2(date.getMonth() + 1);
@@ -143,7 +155,7 @@
         date,
         iso,
         dow,
-        label: `${WEEKDAY_SHORT[dow]} ${pad2(i)}.${pad2(m)}.${y}`,
+        label: `${WEEKDAY_SHORT[dow]} ${formatDate(date)}`,
       });
     }
     return out;
@@ -1063,7 +1075,7 @@
       await writable.close();
 
       await appendCacheLog('Cache-Datei gespeichert.');
-      setCacheStatus(`Verbunden: <strong>${CACHE_FILE_NAME}</strong> (zuletzt gespeichert: ${new Date().toLocaleString()})`);
+      setCacheStatus(`Verbunden: <strong>${CACHE_FILE_NAME}</strong> (zuletzt gespeichert: ${formatDateTime(new Date())})`);
     }catch(e){
       console.warn('In Cache-Datei speichern fehlgeschlagen', e);
       setCacheError('Speichern in Cache-Datei fehlgeschlagen');
@@ -1085,7 +1097,7 @@
 
       loadProjectObject(obj);
       await appendCacheLog('Cache-Datei geladen.');
-      setCacheStatus(`✅ Aus Cache-Datei geladen (${new Date().toLocaleString()})`);
+      setCacheStatus(`✅ Aus Cache-Datei geladen (${formatDateTime(new Date())})`);
     }catch(e){
       console.warn('Aus Cache-Datei laden fehlgeschlagen', e);
       setCacheError('Laden fehlgeschlagen');
@@ -1101,7 +1113,7 @@
       const file = await cacheLogHandle.getFile();
       const writable = await cacheLogHandle.createWritable({ keepExistingData: true });
       await writable.seek(file.size);
-      const stamp = new Date().toISOString();
+      const stamp = formatDateTime(new Date());
       await writable.write(`[${stamp}] ${message}\n`);
       await writable.close();
     }catch(e){
@@ -1444,10 +1456,6 @@
   }
 
   function renderDateCellHtml(day, { isHoliday = false, isSunday = false, holidayName = '', tdReq = false, specialDay = SPECIAL_DAY.NONE } = {}){
-    const dd = pad2(day.date.getDate());
-    const mm = pad2(day.date.getMonth() + 1);
-    const yyyy = day.date.getFullYear();
-
     const numCls = isHoliday ? 'date-num holiday' : (isSunday ? 'date-num sunday' : 'date-num');
     const title = holidayName ? `title="${escapeHtml(holidayName)}"` : '';
     const tdMark = tdReq ? `<span class="tdreq-mark" title="TD an diesem Tag ist verpflichtend">TD!</span>` : '';
@@ -1459,9 +1467,7 @@
     return `
       <div class="datecell">
         <span class="weekday">${escapeHtml(WEEKDAY_SHORT[day.dow])}</span>
-        <span class="${numCls}" ${title}>${dd}</span><span class="date-sep">.</span>
-        <span class="date-mm">${mm}</span><span class="date-sep">.</span>
-        <span class="date-yy">${yyyy}</span>
+        <span class="${numCls}" ${title}>${formatDate(day.date)}</span>
         ${tdMark}
         ${specialMark}
       </div>
@@ -1775,11 +1781,7 @@ function renderEmployeeList(){
       const monthLabel = formatMonthLabelDE(res.monthKey);
       const gen = res.generatedAt ? new Date(res.generatedAt) : new Date();
       let genStr = '';
-      try {
-        genStr = new Intl.DateTimeFormat('de-DE', { dateStyle: 'short', timeStyle: 'short' }).format(gen);
-      } catch {
-        genStr = gen.toLocaleString();
-      }
+      genStr = formatDateTime(gen);
       printHeaderEl.innerHTML = `
         <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;">
           <div style="font-size:16px;font-weight:800;">Dienstplan – ${escapeHtml(monthLabel)}</div>

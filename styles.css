@@ -461,9 +461,8 @@ code{
   /* Give the date/title column a bit more width so the month title fits */
   #planTable th.sticky-col, #planTable td.sticky-col{ width: 120px !important; }
 
-  /* Date cell compact in print (month/year are known) */
+  /* Date cell compact in print, but keep full date visible */
   #planTable .datecell{ white-space: nowrap !important; gap: 3px !important; }
-  #planTable .date-mm, #planTable .date-yy, #planTable .date-sep{ display:none !important; }
   #planTable .datecell .weekday{ color: #111 !important; }
   #planTable .date-num.sunday{ color: #8a4b00 !important; }
   #planTable .date-num.holiday{ color: #9b0000 !important; }
