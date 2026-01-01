@@ -1481,14 +1481,25 @@ function renderEmployeeList(){
         const btnWfActive = st === BLOCK.WF ? 'active' : '';
         const btnHActive = blockIsVacation(st) ? 'active' : '';
 
+        const freeLabel = (() => {
+          if (st === BLOCK.UNI) return 'Uni';
+          if (st === BLOCK.SLASH) return '/';
+          return 'Frei';
+        })();
+
+        const vacationLabel = (() => {
+          if (st === BLOCK.FOBI) return 'Fortb.';
+          return 'Urlaub';
+        })();
+
         const creditHint = isWeekday(day.date) ? `+${round1(emp.weeklyHours/5)}h` : `+0h`;
 
         return `
           <td>
             <div class="toggle2" data-emp-id="${escapeHtml(emp.id)}" data-iso="${escapeHtml(day.iso)}">
-              <button class="tbtn t0 ${btn0Active}" data-action="set-block" data-cycle="free" data-value="${BLOCK.FREE0}" title="Frei ohne Stunden (Stunden werden in der Woche verschoben)">Frei</button>
+              <button class="tbtn t0 ${btn0Active}" data-action="set-block" data-cycle="free" data-value="${BLOCK.FREE0}" title="Frei ohne Stunden (Stunden werden in der Woche verschoben)">${escapeHtml(freeLabel)}</button>
               <button class="tbtn twf ${btnWfActive}" data-action="set-block" data-value="${BLOCK.WF}" title="WF = Wunschfrei (Priorität, max. 3× pro Person/Monat)">WF</button>
-              <button class="tbtn th ${btnHActive}" data-action="set-block" data-cycle="vacation" data-value="${BLOCK.FREEH}" title="Urlaub / bezahlt frei (${creditHint} an Werktagen)">Urlaub</button>
+              <button class="tbtn th ${btnHActive}" data-action="set-block" data-cycle="vacation" data-value="${BLOCK.FREEH}" title="Urlaub / bezahlt frei (${creditHint} an Werktagen)">${escapeHtml(vacationLabel)}</button>
             </div>
           </td>
         `;
