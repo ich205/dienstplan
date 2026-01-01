@@ -10,6 +10,13 @@ const BLOCK = {
 
 const blockIsVacation = (blk) => blk === BLOCK.FREEH || blk === BLOCK.FOBI;
 const blockIsFree = (blk) => blk === BLOCK.FREE0 || blk === BLOCK.UNI || blk === BLOCK.SLASH;
+const blockCountsAsWeekendFree = (blk) => (
+  blk === BLOCK.NONE ||
+  blk === BLOCK.FREE0 ||
+  blk === BLOCK.WF ||
+  blk === BLOCK.FREEH ||
+  blk === BLOCK.UNI
+);
 
 const SHIFT = {
   IWD: { key: 'IWD', label: 'IWD', hours: 20 },
@@ -961,6 +968,44 @@ function evaluateAttemptCtx(ctx, attempt){
           if (works) cost += 350;
         }
       }
+    }
+  }
+
+  for (const emp of ctx.employees){
+    const ed = ctx.empDataById[emp.id];
+    if (!ed) continue;
+
+    const preferWeekendShifts = ed.prefs.weekendBias === 1;
+    const isFreeForWeekendRule = (dayIdx) => {
+      if (schedule.iwd[dayIdx] === emp.id) return false;
+      if (schedule.td[dayIdx] === emp.id) return false;
+      if (forcedOff[emp.id] && forcedOff[emp.id][dayIdx]) return false;
+
+      const blk = ed.blockByDay[dayIdx];
+      return blockCountsAsWeekendFree(blk);
+    };
+
+    let freeWeekendCount = 0;
+    let freeSatCount = 0;
+    let freeSunCount = 0;
+
+    for (let i = 0; i < N; i++){
+      const dow = ctx.days[i].dow;
+      if (dow === 6 && isFreeForWeekendRule(i)) freeSatCount += 1;
+      if (dow === 0 && isFreeForWeekendRule(i)) freeSunCount += 1;
+
+      if (dow === 6 && (i + 1) < N && ctx.days[i + 1].dow === 0){
+        if (isFreeForWeekendRule(i) && isFreeForWeekendRule(i + 1)){
+          freeWeekendCount += 1;
+        }
+      }
+    }
+
+    if (freeWeekendCount < 1) cost += 14_000_000;
+
+    if (!preferWeekendShifts){
+      if (freeSatCount < 2) cost += 7_000_000;
+      if (freeSunCount < 2) cost += 7_000_000;
     }
   }
 
