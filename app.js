@@ -1793,14 +1793,9 @@ function renderEmployeeList(){
           <details>
             <summary>Sonderwünsche (optional)</summary>
 
-            <label class="field">
+          <label class="field">
               <span class="wish-label">Wünsche / Regeln ${WISH_HELP_TOOLTIP_HTML}</span>
               <textarea data-field="wishText" placeholder="z.B. kein TD, mehr TD, nie Mo, doppel IWD, max 1 IWD pro Woche">${escapeHtml(emp.wishText || '')}</textarea>
-            </label>
-
-            <label class="field checkbox">
-              <input type="checkbox" data-field="preferSpecialWithIwd" ${prefs.preferSpecialWithIwd ? 'checked' : ''} />
-              <span>SV/Team gerne mit IWD oder freiem Folgetag ( / ) kombinieren</span>
             </label>
 
             <div class="prefs-parsed" data-role="prefsParsed"><strong>Erkannt:</strong> ${escapeHtml(desc)}</div>
@@ -5289,7 +5284,6 @@ self.onmessage = async (e) => {
     const prevName = emp.name;
     const prevHours = emp.weeklyHours;
     const prevBalance = emp.balanceHours;
-    const prevSpecialPref = emp.prefs?.preferSpecialWithIwd;
     let changeText = '';
     const baseline = empChangeBaseline.get(empId) || {};
 
@@ -5325,34 +5319,9 @@ self.onmessage = async (e) => {
       if (emp.balanceHours !== prevBalance){
         changeText = `Stundenkonto für ${emp.name} auf ${emp.balanceHours}h gesetzt.`;
       }
-    } else if (field === 'wishText'){
-      // bereits über input-Event behandelt
-    } else if (field === 'preferSpecialWithIwd'){
-      const nextVal = Boolean(el.checked);
-      emp.prefs = sanitizePrefs({ ...emp.prefs, preferSpecialWithIwd: nextVal });
-      if (nextVal !== prevSpecialPref){
-        if (baseline.preferSpecialWithIwd === undefined){
-          baseline.preferSpecialWithIwd = prevSpecialPref;
-        }
-
-        removePendingEntries(e => e && typeof e.text === 'string'
-          && e.text.includes(emp.name) && e.text.includes('SV/Team mit IWD (/)'));
-
-        if (nextVal === baseline.preferSpecialWithIwd){
-          delete baseline.preferSpecialWithIwd;
-          if (!Object.keys(baseline).length){
-            empChangeBaseline.delete(empId);
-          } else {
-            empChangeBaseline.set(empId, baseline);
-          }
-        } else {
-          changeText = `${emp.name}: SV/Team mit IWD (/) ${nextVal ? 'bevorzugt' : 'neutral'}.`;
-          empChangeBaseline.set(empId, baseline);
-        }
-      }
     }
 
-    if (field === 'wishText' || field === 'preferSpecialWithIwd'){
+    if (field === 'wishText'){
       const parsedEl = card.querySelector('[data-role="prefsParsed"]');
       if (parsedEl){
         parsedEl.innerHTML = `<strong>Erkannt:</strong> ${escapeHtml(describePrefs(emp.prefs))}`;
