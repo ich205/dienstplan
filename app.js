@@ -721,7 +721,9 @@
 
     // Merge parsed wishText rules (wishText overrides prefs)
     const parsed = parseWishText(safe.wishText);
-    safe.prefs = sanitizePrefs({ ...sanitizedPrefs, ...parsed });
+    // Wichtig: Bei Änderungen am Wunschtext erneut von den Standard-Prefs aus starten,
+    // damit entfernte Sonderwünsche nicht in emp.prefs "kleben" bleiben.
+    safe.prefs = sanitizePrefs({ ...defaultEmpPrefs(), ...parsed });
 
     return safe;
   }
@@ -5314,7 +5316,9 @@ self.onmessage = async (e) => {
     }
 
     emp.wishText = String(el.value || '');
-    emp.prefs = sanitizePrefs({ ...emp.prefs, ...parseWishText(emp.wishText) });
+    const parsedPrefs = parseWishText(emp.wishText);
+    // Neu parsen (ohne alte Wunsch-Effekte), damit entfernte Wünsche nicht hängenbleiben.
+    emp.prefs = sanitizePrefs({ ...defaultEmpPrefs(), ...parsedPrefs });
 
     const parsedEl = card.querySelector('[data-role="prefsParsed"]');
     if (parsedEl){
