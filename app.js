@@ -21,6 +21,15 @@
   const blockIsVacation = (blk) => blk === BLOCK.FREEH || blk === BLOCK.FOBI;
   const blockIsFree = (blk) => blk === BLOCK.FREE0 || blk === BLOCK.UNI || blk === BLOCK.SLASH;
 
+  function getBlockCreditHours({ block, day, emp }){
+    if (block === BLOCK.FOBI) return 8;
+    if (block === BLOCK.FREEH && isWeekday(day.date)){
+      const perWeekday = (Number(emp?.weeklyHours) || 0) / 5;
+      return round1(perWeekday);
+    }
+    return 0;
+  }
+
   const SHIFT = {
     IWD: { key: 'IWD', label: 'IWD', hours: 20 },
     TD: { key: 'TD', label: 'TD', hours: 10 },
@@ -1678,14 +1687,14 @@ function renderEmployeeList(){
     if (blk === BLOCK.WF) badges.push(`<span class="badge wf">WF</span>`);
     if (blockIsVacation(blk)){
       const emp = res.empById[empId];
-      const credit = (emp && isWeekday(day.date)) ? round1(emp.weeklyHours / 5) : 0;
+      const credit = emp ? getBlockCreditHours({ block: blk, day, emp }) : 0;
       const extra = (credit > 0) ? ` +${credit}h` : '';
       const vacLabel = blk === BLOCK.FOBI ? 'FoBi' : 'Urlaub';
       const vacClass = blk === BLOCK.FOBI ? 'fobi' : 'freeh';
       badges.push(`<span class="badge ${vacClass}">${vacLabel}${extra}</span>`);
     }
 
-    if (specialLabel && !isVacation){
+    if (specialLabel && !isVacation && blk !== BLOCK.UNI){
       badges.push(`<span class="badge ${specialDay.toLowerCase()}">${escapeHtml(specialLabel)}</span>`);
     }
 
@@ -2572,7 +2581,6 @@ function renderEmployeeList(){
 
     for (const emp of employees){
       const prefs = sanitizePrefs(emp.prefs);
-      const perWeekday = emp.weeklyHours / 5;
 
       const blockByDay = Array(N);
       const creditByDay = Array(N);
@@ -2583,7 +2591,7 @@ function renderEmployeeList(){
         const day = days[i];
         const blk = getBlock(monthKey, emp.id, day.iso);
         blockByDay[i] = blk;
-        creditByDay[i] = (isWeekday(day.date) && blockIsVacation(blk)) ? perWeekday : 0;
+        creditByDay[i] = getBlockCreditHours({ block: blk, day, emp });
         allowedByDay[i] = !(prefs.bannedDows && prefs.bannedDows.includes(day.dow));
         preferWorkByDay[i] = Boolean(prefs.preferWorkDows && prefs.preferWorkDows.includes(day.dow));
       }
@@ -2617,7 +2625,6 @@ function renderEmployeeList(){
       empDataById[emp.id] = {
         emp,
         prefs,
-        perWeekday,
         blockByDay,
         creditByDay,
         allowedByDay,
@@ -3631,15 +3638,13 @@ function buildScheduleAttempt({ monthKey, days, segments, employees, settings })
 
     for (const seg of segments){
       for (const emp of employees){
-        const perWeekday = emp.weeklyHours / 5;
         const target = emp.weeklyHours * (seg.weekdaysCount / 5);
 
         let credit = 0;
         for (const dayIdx of seg.indices){
           const day = days[dayIdx];
-          if (!isWeekday(day.date)) continue;
           const blk = getBlock(monthKey, emp.id, day.iso);
-          if (blockIsVacation(blk)) credit += perWeekday;
+          credit += getBlockCreditHours({ block: blk, day, emp });
         }
         credit = Math.min(credit, target);
 
@@ -3657,15 +3662,13 @@ function buildScheduleAttempt({ monthKey, days, segments, employees, settings })
       let totalRequired = 0;
 
       for (const emp of employees){
-        const perWeekday = emp.weeklyHours / 5;
         const target = emp.weeklyHours * (seg.weekdaysCount / 5);
 
         let credit = 0;
         for (const dayIdx of segIndices){
           const day = days[dayIdx];
-          if (!isWeekday(day.date)) continue;
           const blk = getBlock(monthKey, emp.id, day.iso);
-          if (blockIsVacation(blk)) credit += perWeekday;
+          credit += getBlockCreditHours({ block: blk, day, emp });
         }
         credit = Math.min(credit, target);
 
@@ -3750,7 +3753,7 @@ function buildScheduleAttempt({ monthKey, days, segments, employees, settings })
     if (!specialDay) return 0;
     if (schedule.iwd[dayIdx] === empId || schedule.td[dayIdx] === empId) return 0;
     const blk = getBlock(monthKey, empId, day.iso);
-    if (blockIsVacation(blk)) return 0;
+    if (blockIsVacation(blk) || blk === BLOCK.UNI) return 0;
     const isForced = Boolean(forcedOff && forcedOff[empId] && forcedOff[empId][dayIdx]);
     return getSpecialDayCredit(specialDay, { forcedOff: isForced });
   }
@@ -3801,7 +3804,6 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
       const segIndices = seg.indices;
 
       for (const emp of employees){
-        const perWeekday = emp.weeklyHours / 5;
         const target = emp.weeklyHours * (seg.weekdaysCount / 5);
 
         let credit = 0;
@@ -3814,10 +3816,8 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
           if (schedule.iwd[dayIdx] === emp.id) work += SHIFT.IWD.hours;
           if (schedule.td[dayIdx] === emp.id) work += SHIFT.TD.hours;
 
-          if (isWeekday(day.date)){
-            const blk = getBlock(monthKey, emp.id, day.iso);
-            if (blockIsVacation(blk)) credit += perWeekday;
-          }
+          const blk = getBlock(monthKey, emp.id, day.iso);
+          credit += getBlockCreditHours({ block: blk, day, emp });
 
           specialCredit += getSpecialDayCreditForEmployee({
             monthKey,
@@ -3957,13 +3957,11 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
       const specialDay = getSpecialDay(monthKey, day.iso);
       for (const emp of employees){
         const blk = getBlock(monthKey, emp.id, day.iso);
-        if (isWeekday(day.date) && blockIsVacation(blk)){
-          summary[emp.id].creditHours += (emp.weeklyHours / 5);
-        }
+        summary[emp.id].creditHours += getBlockCreditHours({ block: blk, day, emp });
 
         if (specialDay){
           if (schedule.iwd[i] === emp.id || schedule.td[i] === emp.id) continue;
-          if (blockIsVacation(blk)) continue;
+          if (blockIsVacation(blk) || blk === BLOCK.UNI) continue;
           const isForced = Boolean(forcedOff && forcedOff[emp.id] && forcedOff[emp.id][i]);
           summary[emp.id].creditHours += getSpecialDayCredit(specialDay, { forcedOff: isForced });
         }
