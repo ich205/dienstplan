@@ -428,6 +428,9 @@
       // SV/TEAM: Kombination mit IWD (oder freiem Folgetag) bevorzugen
       preferSpecialWithIwd: false,
 
+      // Seltener Anreisen: Bei SV/Team möglichst einen IWD, TD oder / haben
+      rareCommuteSpecial: false,
+
       // bevorzugte Arbeitstage (wenn möglich nicht "leer" lassen; kann auch "/" durch IWD am Vortag sein)
       preferWorkDows: [],
 
@@ -479,6 +482,10 @@
       ? Boolean(p.preferSpecialWithIwd)
       : Boolean(base.preferSpecialWithIwd);
 
+    const rareCommuteSpecial = ('rareCommuteSpecial' in p)
+      ? Boolean(p.rareCommuteSpecial)
+      : Boolean(base.rareCommuteSpecial);
+
     const normLimit = (v) => {
       if (v === null || typeof v === 'undefined' || v === '') return null;
       const n = Math.round(Number(v));
@@ -502,6 +509,7 @@
       preferWorkDows,
       weekendBias,
       preferSpecialWithIwd,
+      rareCommuteSpecial,
       maxIwdPerWeek,
       maxTdPerWeek,
       maxIwdPerMonth,
@@ -539,6 +547,10 @@
     }
     if (/\b(sv|team)[^\n]*(?:\bmit\b)?\s*\/?\s*\b(rest|frei)\b/.test(t)){
       prefs.preferSpecialWithIwd = true;
+    }
+
+    if (/\bseltener\s*anreise?n?\b/.test(t) || /\bselten\s*anreise?n?\b/.test(t) || /\bweniger\s*anreise?n?\b/.test(t)){
+      prefs.rareCommuteSpecial = true;
     }
 
     // --- Tage sperren ---
@@ -1655,6 +1667,7 @@
     if (p.weekendBias === 1) parts.push('Wochenende bevorzugt');
     if (p.weekendBias === -1) parts.push('Wochenende ungern');
     if (p.preferSpecialWithIwd) parts.push('SV/Team + IWD oder / bevorzugt');
+    if (p.rareCommuteSpecial) parts.push('SV/Team nur mit Dienst oder / (seltener anreisen)');
 
     // Limits
     if (p.maxIwdPerWeek !== null && typeof p.maxIwdPerWeek === 'number') parts.push(`max IWD/Woche: ${p.maxIwdPerWeek}`);
@@ -1680,6 +1693,7 @@
           <li><code>montags dienst</code> / <code>jeden Freitag Dienst</code> (weich)</li>
           <li><code>wochenende bevorzugt</code> / <code>wochenende ungern</code> (weich)</li>
           <li><code>max 1 IWD pro Woche</code> / <code>max 3 TD Monat</code></li>
+          <li><code>seltener anreisen</code> (SV/Team möglichst mit Dienst oder /)</li>
         </ul>
       </span>
     </span>
@@ -3160,6 +3174,8 @@ function renderEmployeeList(){
       if (specialToday) score += 30;
     }
 
+    if (prefs.rareCommuteSpecial && specialToday) score += 260;
+
     // Limits
     if (prefs.maxIwdPerWeek != null && weekI >= prefs.maxIwdPerWeek) score -= 700;
     if (prefs.maxIwdPerMonth != null && iCount >= prefs.maxIwdPerMonth) score -= 900;
@@ -3235,7 +3251,11 @@ function renderEmployeeList(){
     if (ed.preferWorkByDay[dayIdx]) score += 80;
 
     if (specialToday){
-      score -= prefs.preferSpecialWithIwd ? 420 : 120;
+      if (prefs.rareCommuteSpecial){
+        score += 240;
+      } else {
+        score -= prefs.preferSpecialWithIwd ? 420 : 120;
+      }
     }
 
     // Limits
@@ -5204,7 +5224,13 @@ self.onmessage = async (e) => {
     const emp = state.employees.find(e => e.id === empId);
     if (!emp) return;
 
+    const baseline = empChangeBaseline.get(empId) || {};
     const prevWish = emp.wishText;
+
+    if (baseline.wishText === undefined){
+      baseline.wishText = prevWish;
+    }
+
     emp.wishText = String(el.value || '');
     emp.prefs = sanitizePrefs({ ...emp.prefs, ...parseWishText(emp.wishText) });
 
@@ -5213,12 +5239,19 @@ self.onmessage = async (e) => {
       parsedEl.innerHTML = `<strong>Erkannt:</strong> ${escapeHtml(describePrefs(emp.prefs))}`;
     }
 
-    if (emp.wishText !== prevWish){
-      markAllMonthsPending({
-        title: 'Sonderwunsch geändert',
-        text: `${emp.name}: Wünsche aktualisiert.`,
-      });
-      showToast(`Sonderwünsche für ${emp.name} geändert.`);
+    const pendingText = `Sonderwünsche für ${emp.name} geändert.`;
+    removePendingEntries(e => e && typeof e.text === 'string' && e.text === pendingText);
+
+    if (emp.wishText !== baseline.wishText){
+      empChangeBaseline.set(empId, baseline);
+      appendPendingEntry(state.month, { title: 'Sonderwunsch geändert', text: pendingText });
+    } else {
+      delete baseline.wishText;
+      if (Object.keys(baseline).length){
+        empChangeBaseline.set(empId, baseline);
+      } else {
+        empChangeBaseline.delete(empId);
+      }
     }
 
     saveState();
@@ -5234,6 +5267,8 @@ self.onmessage = async (e) => {
     const field = el.getAttribute('data-field');
     if (!field) return;
 
+    if (field === 'wishText') return;
+
     const card = el.closest('.emp-card');
     const empId = card ? card.getAttribute('data-emp-id') : null;
     if (!empId) return;
@@ -5244,7 +5279,6 @@ self.onmessage = async (e) => {
     const prevName = emp.name;
     const prevHours = emp.weeklyHours;
     const prevBalance = emp.balanceHours;
-    const prevWish = emp.wishText;
     const prevSpecialPref = emp.prefs?.preferSpecialWithIwd;
     let changeText = '';
     const baseline = empChangeBaseline.get(empId) || {};
@@ -5282,16 +5316,29 @@ self.onmessage = async (e) => {
         changeText = `Stundenkonto für ${emp.name} auf ${emp.balanceHours}h gesetzt.`;
       }
     } else if (field === 'wishText'){
-      emp.wishText = String(el.value || '').trim();
-      emp.prefs = sanitizePrefs({ ...emp.prefs, ...parseWishText(emp.wishText) });
-      if (emp.wishText !== prevWish){
-        changeText = `${emp.name}: Wünsche aktualisiert.`;
-      }
+      // bereits über input-Event behandelt
     } else if (field === 'preferSpecialWithIwd'){
       const nextVal = Boolean(el.checked);
       emp.prefs = sanitizePrefs({ ...emp.prefs, preferSpecialWithIwd: nextVal });
       if (nextVal !== prevSpecialPref){
-        changeText = `${emp.name}: SV/Team mit IWD (/) ${nextVal ? 'bevorzugt' : 'neutral'}.`;
+        if (baseline.preferSpecialWithIwd === undefined){
+          baseline.preferSpecialWithIwd = prevSpecialPref;
+        }
+
+        removePendingEntries(e => e && typeof e.text === 'string'
+          && e.text.includes(emp.name) && e.text.includes('SV/Team mit IWD (/)'));
+
+        if (nextVal === baseline.preferSpecialWithIwd){
+          delete baseline.preferSpecialWithIwd;
+          if (!Object.keys(baseline).length){
+            empChangeBaseline.delete(empId);
+          } else {
+            empChangeBaseline.set(empId, baseline);
+          }
+        } else {
+          changeText = `${emp.name}: SV/Team mit IWD (/) ${nextVal ? 'bevorzugt' : 'neutral'}.`;
+          empChangeBaseline.set(empId, baseline);
+        }
       }
     }
 
@@ -5303,7 +5350,7 @@ self.onmessage = async (e) => {
     }
 
     if (changeText){
-      markAllMonthsPending({ title: 'Mitarbeiter geändert', text: changeText });
+      appendPendingEntry(state.month, { title: 'Mitarbeiter geändert', text: changeText });
       showToast(changeText);
     }
 
