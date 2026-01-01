@@ -568,7 +568,7 @@
     }
 
     // Überstunden sammeln (nur wenn Woche unter Soll)
-    if (/\bü\s*berstunden\s*(sammeln|aufbauen)\b/.test(t) || /\bueberstunden\s*(sammeln|aufbauen)\b/.test(t)){
+    if (/(?:^|\s)(?:über|ueber)stunden\s*(sammeln|aufbauen)(?=\s|$)/.test(t)){
       prefs.collectOvertime = true;
     }
 
