@@ -660,9 +660,16 @@
   let dragDropHandled = false;
   let lastDraggedCell = null;
   let toastTimer = null;
+  const empChangeBaseline = new Map();
 
   function defaultPendingStatus(){
     return { hasChanges: false, hasConflicts: false, entries: [] };
+  }
+
+  function recalcPendingStatus(status){
+    if (!status) return;
+    status.hasConflicts = Boolean(status.entries.some(e => e && e.type === 'danger'));
+    status.hasChanges = Boolean(status.hasConflicts || status.entries.length);
   }
 
   function normalizePendingEntry(entry){
@@ -725,6 +732,19 @@
         if (status.entries.length > 30){
           status.entries = status.entries.slice(-30);
         }
+        recalcPendingStatus(status);
+      }
+    }
+  }
+
+  function removePendingEntries(match){
+    if (typeof match !== 'function') return;
+    for (const mk of knownMonthKeys()){
+      const status = ensurePendingStatus(mk);
+      const before = status.entries.length;
+      status.entries = status.entries.filter(e => !match(e));
+      if (status.entries.length !== before){
+        recalcPendingStatus(status);
       }
     }
   }
@@ -5024,6 +5044,7 @@ self.onmessage = async (e) => {
     const prevBalance = emp.balanceHours;
     const prevWish = emp.wishText;
     let changeText = '';
+    const baseline = empChangeBaseline.get(empId) || {};
 
     if (field === 'name'){
       emp.name = String(el.value || '').trim() || 'Unbenannt';
@@ -5035,7 +5056,21 @@ self.onmessage = async (e) => {
       emp.weeklyHours = round1(clamp(Number(el.value || 0), 0, 80));
       el.value = emp.weeklyHours;
       if (emp.weeklyHours !== prevHours){
-        changeText = `Wochenstunden für ${emp.name} auf ${emp.weeklyHours}h geändert.`;
+        if (baseline.weeklyHours === undefined){
+          baseline.weeklyHours = prevHours;
+        }
+        removePendingEntries(e => e && typeof e.text === 'string' && e.text.includes(`Wochenstunden für ${emp.name}`));
+        if (emp.weeklyHours === baseline.weeklyHours){
+          delete baseline.weeklyHours;
+          if (!Object.keys(baseline).length){
+            empChangeBaseline.delete(empId);
+          } else {
+            empChangeBaseline.set(empId, baseline);
+          }
+        } else {
+          changeText = `Wochenstunden für ${emp.name} auf ${emp.weeklyHours}h geändert.`;
+          empChangeBaseline.set(empId, baseline);
+        }
       }
     } else if (field === 'balanceHours'){
       emp.balanceHours = round1(clamp(Number(el.value || 0), -10000, 10000));
@@ -5060,7 +5095,7 @@ self.onmessage = async (e) => {
     renderAll();
   });
 
-blockTableEl.addEventListener('click', (ev) => {
+  blockTableEl.addEventListener('click', (ev) => {
     const btn = ev.target.closest('button[data-action="set-block"]');
     if (!btn) return;
 
@@ -5102,6 +5137,13 @@ blockTableEl.addEventListener('click', (ev) => {
     const hadChange = current !== next;
 
     setBlock(state.month, empId, iso, next);
+
+    const removeBlockEntry = () => removePendingEntries(e => {
+      if (!e || typeof e.text !== 'string') return false;
+      return e.text.includes(`${empName}:`) && e.text.includes(iso);
+    });
+
+    removeBlockEntry();
 
     if (hadChange){
       const blockLabel = describeBlockValue(next || current);
