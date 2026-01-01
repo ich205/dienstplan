@@ -838,7 +838,9 @@ function evaluateAttemptCtx(ctx, attempt){
       const total = work + credit + specialCredit;
       const delta = total - target;
       const allowOvertime = Boolean(ctx.segUnderTarget && ctx.segUnderTarget[si] && ed.prefs.collectOvertime);
-      const deltaForCost = (allowOvertime && delta > 0) ? 0 : delta;
+      const deltaForCost = delta > 0
+        ? delta * (allowOvertime ? 0.5 : 1)
+        : delta;
 
       cost += Math.abs(deltaForCost) * 50 + (deltaForCost > 0 ? deltaForCost * 25 : 0);
 
@@ -907,7 +909,9 @@ function evaluateAttemptCtx(ctx, attempt){
       + (specialCreditByEmp[emp.id] || 0);
     const delta = total - (ed.monthDesiredTarget || 0);
     const allowMonthOvertime = Boolean(ctx.hasUnderTarget && ed.prefs.collectOvertime);
-    const deltaForCost = (allowMonthOvertime && delta > 0) ? 0 : delta;
+    const deltaForCost = delta > 0
+      ? delta * (allowMonthOvertime ? 0.5 : 1)
+      : delta;
     maxDelta = Math.max(maxDelta, deltaForCost);
     minDelta = Math.min(minDelta, deltaForCost);
 
