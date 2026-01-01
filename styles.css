@@ -749,6 +749,16 @@ body.fullscreen-plan .fullscreen-actions{
   background: rgba(255,209,102,.10);
 }
 
+.badge.uni{
+  border-color: rgba(255,209,102,.65);
+  background: rgba(255,209,102,.18);
+}
+
+.badge.slash{
+  border-color: rgba(154,176,208,.65);
+  background: rgba(154,176,208,.14);
+}
+
 .badge.wf{
   border-color: rgba(190,106,255,.55);
   background: rgba(190,106,255,.10);
@@ -757,6 +767,11 @@ body.fullscreen-plan .fullscreen-actions{
 .badge.freeh{
   border-color: rgba(73,209,124,.55);
   background: rgba(73,209,124,.10);
+}
+
+.badge.fobi{
+  border-color: rgba(73,209,124,.70);
+  background: rgba(73,209,124,.18);
 }
 
 .badge.tdreq{
