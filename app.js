@@ -106,6 +106,14 @@
     return { y, m }; // m: 1..12
   }
 
+  function previousMonthKey(monthKey){
+    const parsed = parseMonthKey(monthKey);
+    if (!parsed) return null;
+    const date = new Date(parsed.y, parsed.m - 1, 1);
+    date.setMonth(date.getMonth() - 1);
+    return monthKeyFromDate(date);
+  }
+
   function formatMonthLabelDE(monthKey){
     const p = parseMonthKey(monthKey);
     if (!p) return String(monthKey || '');
@@ -1212,6 +1220,40 @@
   }
 
   ensureMonthStructures(state.month);
+
+  function applyOvertimeCarryover(targetMonthKey){
+    const prevMonth = previousMonthKey(targetMonthKey);
+    if (!prevMonth) return false;
+
+    const prevResult = state.lastResultByMonth[prevMonth];
+    if (!prevResult || !prevResult.monthSummaryByEmpId) return false;
+
+    let updated = false;
+
+    for (const emp of state.employees){
+      const prevSummary = prevResult.monthSummaryByEmpId[emp.id];
+      if (!prevSummary) continue;
+
+      const nextBalance = round1(clamp(
+        Number(prevSummary.balanceEnd ?? prevSummary.balanceStart ?? emp.balanceHours ?? 0),
+        -10000,
+        10000
+      ));
+
+      if (Number.isNaN(nextBalance)) continue;
+      if (nextBalance !== emp.balanceHours){
+        emp.balanceHours = nextBalance;
+        updated = true;
+      }
+    }
+
+    if (updated){
+      const monthLabel = formatMonthLabelDE(prevMonth);
+      showToast(`Überstunden aus ${monthLabel} übernommen.`);
+    }
+
+    return updated;
+  }
 
   // ---------- Blocks (Month) ----------
   function getBlock(monthKey, empId, isoDate){
@@ -4984,6 +5026,7 @@ self.onmessage = async (e) => {
     const v = String(monthSelectEl.value || '').trim();
     if (!/^\d{4}-\d{2}$/.test(v)) return;
 
+    applyOvertimeCarryover(v);
     state.month = v;
     ensureMonthStructures(state.month);
     saveState();
