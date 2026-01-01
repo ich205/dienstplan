@@ -549,7 +549,13 @@
       prefs.preferSpecialWithIwd = true;
     }
 
-    if (/\bseltener\s*anreise?n?\b/.test(t) || /\bselten\s*anreise?n?\b/.test(t) || /\bweniger\s*anreise?n?\b/.test(t)){
+    if (/(seltener|selten|weniger)\s*anreise?n?/.test(t)){
+      prefs.rareCommuteSpecial = true;
+    }
+
+    // "SV/Team nur mit Dienst oder /" => Seltener Anreisen aktivieren
+    const specialCommuteRe = /\b(sv|team)[^\n]*\b(mit|nur\s*(bei|wenn)?)\b[^\n]*(iwd|td|dienst|\/)\b/;
+    if (specialCommuteRe.test(t)){
       prefs.rareCommuteSpecial = true;
     }
 
