@@ -679,6 +679,10 @@
   function normalizeEmployee(emp){
     const basePrefs = defaultEmpPrefs();
 
+    const sanitizedPrefs = sanitizePrefs(emp && emp.prefs ? emp.prefs : basePrefs);
+    // Migration: Häkchen für "seltener anreisen" entfernen; Wiedererkennung erfolgt über Wunschtext.
+    sanitizedPrefs.rareCommuteSpecial = false;
+
     const safe = {
       id: emp && emp.id ? String(emp.id) : makeId(),
       name: String(emp && emp.name ? emp.name : '').trim() || 'Unbenannt',
@@ -690,7 +694,7 @@
         10000
       )),
       wishText: String(emp && (emp.wishText ?? emp.wishes ?? '') ? (emp.wishText ?? emp.wishes) : '').trim(),
-      prefs: sanitizePrefs(emp && emp.prefs ? emp.prefs : basePrefs),
+      prefs: sanitizedPrefs,
     };
 
     // Keep weeklyHours to sensible values; still allow any number, but we round to 1.
@@ -698,7 +702,7 @@
 
     // Merge parsed wishText rules (wishText overrides prefs)
     const parsed = parseWishText(safe.wishText);
-    safe.prefs = sanitizePrefs({ ...safe.prefs, ...parsed });
+    safe.prefs = sanitizePrefs({ ...sanitizedPrefs, ...parsed });
 
     return safe;
   }
