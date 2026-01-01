@@ -425,6 +425,9 @@
       // 0/1: Wunsch, dass der Tag nach dem obligatorischen "/" ebenfalls frei bleibt (also 2 freie Tage nach IWD)
       extraRestAfterIWD: 0,
 
+      // SV/TEAM: Kombination mit IWD (oder freiem Folgetag) bevorzugen
+      preferSpecialWithIwd: false,
+
       // bevorzugte Arbeitstage (wenn möglich nicht "leer" lassen; kann auch "/" durch IWD am Vortag sein)
       preferWorkDows: [],
 
@@ -472,6 +475,10 @@
     let weekendBias = Number(('weekendBias' in p) ? p.weekendBias : base.weekendBias);
     if (![ -1, 0, 1 ].includes(weekendBias)) weekendBias = 0;
 
+    const preferSpecialWithIwd = ('preferSpecialWithIwd' in p)
+      ? Boolean(p.preferSpecialWithIwd)
+      : Boolean(base.preferSpecialWithIwd);
+
     const normLimit = (v) => {
       if (v === null || typeof v === 'undefined' || v === '') return null;
       const n = Math.round(Number(v));
@@ -494,6 +501,7 @@
       extraRestAfterIWD,
       preferWorkDows,
       weekendBias,
+      preferSpecialWithIwd,
       maxIwdPerWeek,
       maxTdPerWeek,
       maxIwdPerMonth,
@@ -502,7 +510,6 @@
   }
 
   function parseWishText(text){
-    const base = defaultEmpPrefs();
     const t = String(text || '')
       .toLowerCase()
       .replace(/[\n\r\t]/g, ' ')
@@ -510,9 +517,9 @@
       .replace(/\s+/g, ' ')
       .trim();
 
-    if (!t) return base;
+    if (!t) return {};
 
-    const prefs = { ...base };
+    const prefs = {};
 
     // --- Schichtarten ---
     // Beispiele: "kein TD", "nur IWD", "keine TD"
@@ -526,6 +533,13 @@
     const preferIwd = /\b(mehr|bevorzugt)\s*iwd\b/.test(t) || /\biwd\s*>\s*td\b/.test(t);
     if (preferTd && !preferIwd) prefs.tdBias = 1;
     if (preferIwd && !preferTd) prefs.tdBias = -1;
+
+    if (/\b(sv|team)[^\n]*\biwd\b/.test(t) || /\biwd[^\n]*(sv|team)\b/.test(t)){
+      prefs.preferSpecialWithIwd = true;
+    }
+    if (/\b(sv|team)[^\n]*(?:\bmit\b)?\s*\/?\s*\b(rest|frei)\b/.test(t)){
+      prefs.preferSpecialWithIwd = true;
+    }
 
     // --- Tage sperren ---
     // Beispiele: "nie Mo", "nicht Dienstag", "kein Montag"
@@ -1640,6 +1654,7 @@
     // Wochenend-Bias
     if (p.weekendBias === 1) parts.push('Wochenende bevorzugt');
     if (p.weekendBias === -1) parts.push('Wochenende ungern');
+    if (p.preferSpecialWithIwd) parts.push('SV/Team + IWD oder / bevorzugt');
 
     // Limits
     if (p.maxIwdPerWeek !== null && typeof p.maxIwdPerWeek === 'number') parts.push(`max IWD/Woche: ${p.maxIwdPerWeek}`);
@@ -1757,6 +1772,11 @@ function renderEmployeeList(){
             <label class="field">
               <span class="wish-label">Wünsche / Regeln ${WISH_HELP_TOOLTIP_HTML}</span>
               <textarea data-field="wishText" placeholder="z.B. kein TD, mehr TD, nie Mo, doppel IWD, max 1 IWD pro Woche">${escapeHtml(emp.wishText || '')}</textarea>
+            </label>
+
+            <label class="field checkbox">
+              <input type="checkbox" data-field="preferSpecialWithIwd" ${prefs.preferSpecialWithIwd ? 'checked' : ''} />
+              <span>SV/Team gerne mit IWD oder freiem Folgetag ( / ) kombinieren</span>
             </label>
 
             <div class="prefs-parsed" data-role="prefsParsed"><strong>Erkannt:</strong> ${escapeHtml(desc)}</div>
@@ -3094,6 +3114,10 @@ function renderEmployeeList(){
 
     const day = ctx.days[dayIdx];
     const isWeekend = (day.dow === 0 || day.dow === 6);
+    const specialToday = ctx.specialDayByDay ? ctx.specialDayByDay[dayIdx] : SPECIAL_DAY.NONE;
+    const specialTomorrow = (dayIdx + 1 < ctx.N && ctx.specialDayByDay)
+      ? ctx.specialDayByDay[dayIdx + 1]
+      : SPECIAL_DAY.NONE;
 
     let score = 0;
 
@@ -3128,6 +3152,13 @@ function renderEmployeeList(){
     // Bevorzugter Dienst-Tag
     if (ed.preferWorkByDay[dayIdx]) score += 120;
     if (dayIdx + 1 < ctx.N && ed.preferWorkByDay[dayIdx + 1]) score += 90; // / morgen
+
+    if (prefs.preferSpecialWithIwd){
+      if (specialToday) score += 320;
+      if (specialTomorrow) score += 220;
+    } else {
+      if (specialToday) score += 30;
+    }
 
     // Limits
     if (prefs.maxIwdPerWeek != null && weekI >= prefs.maxIwdPerWeek) score -= 700;
@@ -3177,6 +3208,7 @@ function renderEmployeeList(){
 
     const day = ctx.days[dayIdx];
     const isWeekend = (day.dow === 0 || day.dow === 6);
+    const specialToday = ctx.specialDayByDay ? ctx.specialDayByDay[dayIdx] : SPECIAL_DAY.NONE;
 
     let score = 0;
 
@@ -3201,6 +3233,10 @@ function renderEmployeeList(){
 
     // Bevorzugter Dienst-Tag
     if (ed.preferWorkByDay[dayIdx]) score += 80;
+
+    if (specialToday){
+      score -= prefs.preferSpecialWithIwd ? 420 : 120;
+    }
 
     // Limits
     if (prefs.maxTdPerWeek != null && weekT >= prefs.maxTdPerWeek) score -= 450;
@@ -3457,6 +3493,7 @@ function renderEmployeeList(){
     for (let i = 0; i < N; i++){
       const iwdEmpId = schedule.iwd[i];
       const tdEmpId  = schedule.td[i];
+      const specialDay = ctx.specialDayByDay ? ctx.specialDayByDay[i] : SPECIAL_DAY.NONE;
 
       if (iwdEmpId && tdEmpId && iwdEmpId === tdEmpId) cost += COST.SAME_PERSON;
 
@@ -3480,6 +3517,12 @@ function renderEmployeeList(){
 
       checkOne(iwdEmpId, SHIFT.IWD);
       checkOne(tdEmpId, SHIFT.TD);
+
+      if (specialDay && tdEmpId){
+        const tdPrefs = ctx.empDataById[tdEmpId]?.prefs;
+        const penalty = tdPrefs?.preferSpecialWithIwd ? 180_000 : 40_000;
+        cost += penalty;
+      }
     }
 
     // /-Tag darf kein Urlaub/WF sein (Frei nur im Notfall)
@@ -5202,6 +5245,7 @@ self.onmessage = async (e) => {
     const prevHours = emp.weeklyHours;
     const prevBalance = emp.balanceHours;
     const prevWish = emp.wishText;
+    const prevSpecialPref = emp.prefs?.preferSpecialWithIwd;
     let changeText = '';
     const baseline = empChangeBaseline.get(empId) || {};
 
@@ -5242,6 +5286,19 @@ self.onmessage = async (e) => {
       emp.prefs = sanitizePrefs({ ...emp.prefs, ...parseWishText(emp.wishText) });
       if (emp.wishText !== prevWish){
         changeText = `${emp.name}: Wünsche aktualisiert.`;
+      }
+    } else if (field === 'preferSpecialWithIwd'){
+      const nextVal = Boolean(el.checked);
+      emp.prefs = sanitizePrefs({ ...emp.prefs, preferSpecialWithIwd: nextVal });
+      if (nextVal !== prevSpecialPref){
+        changeText = `${emp.name}: SV/Team mit IWD (/) ${nextVal ? 'bevorzugt' : 'neutral'}.`;
+      }
+    }
+
+    if (field === 'wishText' || field === 'preferSpecialWithIwd'){
+      const parsedEl = card.querySelector('[data-role="prefsParsed"]');
+      if (parsedEl){
+        parsedEl.innerHTML = `<strong>Erkannt:</strong> ${escapeHtml(describePrefs(emp.prefs))}`;
       }
     }
 
