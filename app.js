@@ -314,6 +314,41 @@
     return { ...baseSettings, ...(isPlainObject(value) ? value : {}) };
   }
 
+  function normalizeDays(days, monthKey){
+    const parsedMonth = parseMonthKey(monthKey);
+    if (!Array.isArray(days)) return [];
+
+    return days.map((day, idx) => {
+      const index = typeof day?.index === 'number' ? day.index : idx;
+      const iso = typeof day?.iso === 'string' ? day.iso : null;
+
+      let date = day?.date instanceof Date ? day.date : null;
+      if (!date && typeof day?.date === 'string') date = parseISODate(day.date);
+      if (!date && iso) date = parseISODate(iso);
+      if (!date && parsedMonth){
+        const d = Number.isInteger(index) ? index + 1 : idx + 1;
+        date = new Date(parsedMonth.y, parsedMonth.m - 1, d);
+      }
+      if (!(date instanceof Date)) date = new Date(NaN);
+
+      const dow = Number.isInteger(day?.dow) ? day.dow : (Number.isNaN(date.getTime()) ? null : date.getDay());
+      const safeDow = Number.isInteger(dow) ? dow : null;
+      const safeIso = iso || (date && !Number.isNaN(date.getTime()) ? toISODate(date) : '');
+      const label = (safeDow !== null && date && !Number.isNaN(date.getTime()))
+        ? `${WEEKDAY_SHORT[safeDow]} ${formatDate(date)}`
+        : (typeof day?.label === 'string' ? day.label : '');
+
+      return {
+        ...day,
+        index,
+        date,
+        iso: safeIso,
+        dow: safeDow,
+        label,
+      };
+    });
+  }
+
   function normalizeSpecialDay(value){
     if (value === SPECIAL_DAY.SV || value === SPECIAL_DAY.TEAM) return value;
     return SPECIAL_DAY.NONE;
@@ -659,6 +694,11 @@
       // Vollbildmodus nicht persistent halten, damit Übersichten nicht dauerhaft verschwinden.
       state.settings.fullscreenPlan = false;
 
+      // Normalize existing plan results (dates can otherwise become strings after JSON roundtrips)
+      for (const mk of Object.keys(state.lastResultByMonth)){
+        state.lastResultByMonth[mk] = normalizeResult(state.lastResultByMonth[mk], { monthKey: mk, settings: state.settings });
+      }
+
       return state;
     }catch(e){
       console.warn('State konnte nicht geladen werden, nutze Default.', e);
@@ -691,6 +731,34 @@
     const title = typeof entry.title === 'string' && entry.title.trim() ? entry.title.trim() : 'Plan beachten';
     const type = entry.type === 'danger' ? 'danger' : 'warn';
     return { type, title, text };
+  }
+
+  function normalizeResult(result, { monthKey, settings }){
+    if (!result || typeof result !== 'object') return null;
+
+    const safeMonthKey = typeof result.monthKey === 'string' ? result.monthKey : monthKey;
+    const mergedSettings = safeSettings(result.settings, settings || defaultState().settings);
+    const employees = Array.isArray(result.employees) ? result.employees.map(normalizeEmployee) : [];
+    const days = normalizeDays(result.days, safeMonthKey);
+    const segments = buildWeekSegments(days);
+    const schedule = isPlainObject(result.schedule) ? result.schedule : { iwd: [], td: [] };
+    const forcedOff = isPlainObject(result.forcedOff) ? result.forcedOff : {};
+
+    const ctx = buildMonthContext({ monthKey: safeMonthKey, days, segments, employees, settings: mergedSettings });
+    const summary = buildMonthSummaryCtx(ctx, schedule, forcedOff);
+
+    return {
+      ...result,
+      monthKey: safeMonthKey,
+      settings: mergedSettings,
+      employees,
+      days,
+      segments,
+      schedule,
+      forcedOff,
+      monthSummaryByEmpId: summary.summaryByEmpId || {},
+      empById: summary.empById || {},
+    };
   }
 
   function normalizePendingStatus(value){
@@ -5371,6 +5439,10 @@ self.onmessage = async (e) => {
         lastResultByMonth: safeRecord(obj.lastResultByMonth),
         pendingChangesByMonth: normalizePendingRecord(obj.pendingChangesByMonth),
       };
+
+      for (const mk of Object.keys(state.lastResultByMonth)){
+        state.lastResultByMonth[mk] = normalizeResult(state.lastResultByMonth[mk], { monthKey: mk, settings: state.settings });
+      }
 
       if (typeof state.month !== 'string' || !/^\d{4}-\d{2}$/.test(state.month)){
         state.month = base.month;
