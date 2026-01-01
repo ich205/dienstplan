@@ -13,7 +13,13 @@
     FREE0: 'FREE0', // Frei ohne Stunden
     WF: 'WF',       // Wunschfrei (Priorität, max. 3x pro Person/Monat)
     FREEH: 'FREEH', // Urlaub (mit Stunden-Gutschrift)
+    FOBI: 'FOBI',   // Fortbildung (wie Urlaub)
+    UNI: 'UNI',     // Uni (wie Frei)
+    SLASH: 'SLASH', // Freizeitausgleich mit Schrägstrich
   };
+
+  const blockIsVacation = (blk) => blk === BLOCK.FREEH || blk === BLOCK.FOBI;
+  const blockIsFree = (blk) => blk === BLOCK.FREE0 || blk === BLOCK.UNI || blk === BLOCK.SLASH;
 
   const SHIFT = {
     IWD: { key: 'IWD', label: 'IWD', hours: 20 },
@@ -999,6 +1005,13 @@
     return c;
   }
 
+  function nextBlockFromCycle(current, options){
+    const cycle = [...options, BLOCK.NONE];
+    const idx = cycle.indexOf(current);
+    if (idx === -1 || idx === cycle.length - 1) return cycle[0];
+    return cycle[(idx + 1) % cycle.length];
+  }
+
   // ---------- TD Pflicht (pro Tag, global) ----------
   function getTdRequired(monthKey, isoDate){
     const m = state.tdRequiredByMonth && state.tdRequiredByMonth[monthKey];
@@ -1464,18 +1477,18 @@ function renderEmployeeList(){
       const cells = state.employees.map(emp => {
         const st = getBlock(monthKey, emp.id, day.iso);
 
-        const btn0Active = st === BLOCK.FREE0 ? 'active' : '';
+        const btn0Active = blockIsFree(st) ? 'active' : '';
         const btnWfActive = st === BLOCK.WF ? 'active' : '';
-        const btnHActive = st === BLOCK.FREEH ? 'active' : '';
+        const btnHActive = blockIsVacation(st) ? 'active' : '';
 
         const creditHint = isWeekday(day.date) ? `+${round1(emp.weeklyHours/5)}h` : `+0h`;
 
         return `
           <td>
             <div class="toggle2" data-emp-id="${escapeHtml(emp.id)}" data-iso="${escapeHtml(day.iso)}">
-              <button class="tbtn t0 ${btn0Active}" data-action="set-block" data-value="${BLOCK.FREE0}" title="Frei ohne Stunden (Stunden werden in der Woche verschoben)">Frei</button>
+              <button class="tbtn t0 ${btn0Active}" data-action="set-block" data-cycle="free" data-value="${BLOCK.FREE0}" title="Frei ohne Stunden (Stunden werden in der Woche verschoben)">Frei</button>
               <button class="tbtn twf ${btnWfActive}" data-action="set-block" data-value="${BLOCK.WF}" title="WF = Wunschfrei (Priorität, max. 3× pro Person/Monat)">WF</button>
-              <button class="tbtn th ${btnHActive}" data-action="set-block" data-value="${BLOCK.FREEH}" title="Urlaub / bezahlt frei (${creditHint} an Werktagen)">Urlaub</button>
+              <button class="tbtn th ${btnHActive}" data-action="set-block" data-cycle="vacation" data-value="${BLOCK.FREEH}" title="Urlaub / bezahlt frei (${creditHint} an Werktagen)">Urlaub</button>
             </div>
           </td>
         `;
@@ -1641,7 +1654,7 @@ function renderEmployeeList(){
     const forced = res.forcedOff && res.forcedOff[empId] && res.forcedOff[empId][dayIdx];
     const specialDay = getSpecialDay(monthKey, day.iso);
     const specialLabel = getSpecialDayLabel(specialDay);
-    const isVacation = blk === BLOCK.FREEH;
+    const isVacation = blockIsVacation(blk);
 
     const badges = [];
     if (forced){
@@ -1649,12 +1662,16 @@ function renderEmployeeList(){
     }
 
     if (blk === BLOCK.FREE0) badges.push(`<span class="badge free0">Frei</span>`);
+    if (blk === BLOCK.UNI) badges.push(`<span class="badge uni">Uni</span>`);
+    if (blk === BLOCK.SLASH) badges.push(`<span class="badge slash">/</span>`);
     if (blk === BLOCK.WF) badges.push(`<span class="badge wf">WF</span>`);
-    if (blk === BLOCK.FREEH){
+    if (blockIsVacation(blk)){
       const emp = res.empById[empId];
       const credit = (emp && isWeekday(day.date)) ? round1(emp.weeklyHours / 5) : 0;
       const extra = (credit > 0) ? ` +${credit}h` : '';
-      badges.push(`<span class="badge freeh">Urlaub${extra}</span>`);
+      const vacLabel = blk === BLOCK.FOBI ? 'FoBi' : 'Urlaub';
+      const vacClass = blk === BLOCK.FOBI ? 'fobi' : 'freeh';
+      badges.push(`<span class="badge ${vacClass}">${vacLabel}${extra}</span>`);
     }
 
     if (specialLabel && !isVacation){
@@ -2163,8 +2180,15 @@ function renderEmployeeList(){
     }
 
     if (payload.type === 'block'){
-      const blockVal = payload.value === BLOCK.FREEH ? BLOCK.FREEH
-        : (payload.value === BLOCK.WF ? BLOCK.WF : null);
+      const allowedBlocks = new Set([
+        BLOCK.FREE0,
+        BLOCK.UNI,
+        BLOCK.SLASH,
+        BLOCK.WF,
+        BLOCK.FREEH,
+        BLOCK.FOBI,
+      ]);
+      const blockVal = allowedBlocks.has(payload.value) ? payload.value : null;
       if (!blockVal) return;
 
       setBlock(res.monthKey, emp.id, day.iso, blockVal);
@@ -2548,7 +2572,7 @@ function renderEmployeeList(){
         const day = days[i];
         const blk = getBlock(monthKey, emp.id, day.iso);
         blockByDay[i] = blk;
-        creditByDay[i] = (isWeekday(day.date) && blk === BLOCK.FREEH) ? perWeekday : 0;
+        creditByDay[i] = (isWeekday(day.date) && blockIsVacation(blk)) ? perWeekday : 0;
         allowedByDay[i] = !(prefs.bannedDows && prefs.bannedDows.includes(day.dow));
         preferWorkByDay[i] = Boolean(prefs.preferWorkDows && prefs.preferWorkDows.includes(day.dow));
       }
@@ -2641,9 +2665,9 @@ function renderEmployeeList(){
     // stage 2: frei + (Frei ohne Std) + (WF)
     // stage 3: zusätzlich Urlaub (nur als absoluter Notfall)
     if (!blk || blk === BLOCK.NONE) return true;
-    if (blk === BLOCK.FREE0) return stage >= 1;
+    if (blockIsFree(blk)) return stage >= 1;
     if (blk === BLOCK.WF) return stage >= 2;
-    if (blk === BLOCK.FREEH) return stage >= 3;
+    if (blockIsVacation(blk)) return stage >= 3;
     return false;
   }
 
@@ -2778,9 +2802,9 @@ function renderEmployeeList(){
     // Folgetag nach IWD: keine "Frei"-Logik, sondern WF/Urlaub vermeiden
     if (dayIdx + 1 < ctx.N){
       const nextBlock = ed.blockByDay[dayIdx + 1];
-      if (nextBlock === BLOCK.FREEH) score -= 800;
+      if (blockIsVacation(nextBlock)) score -= 800;
       else if (nextBlock === BLOCK.WF) score -= 500;
-      else if (nextBlock === BLOCK.FREE0) score -= 120;
+      else if (blockIsFree(nextBlock)) score -= 120;
     }
 
     // Vermeide starke Überplanung
@@ -3099,9 +3123,9 @@ function renderEmployeeList(){
         if (!ed) { cost += COST.HARD; return; }
 
         const blk = ed.blockByDay[i];
-        if (blk === BLOCK.FREEH) cost += COST.BLOCK_URLAUB;
+        if (blockIsVacation(blk)) cost += COST.BLOCK_URLAUB;
         else if (blk === BLOCK.WF) cost += COST.BLOCK_WF;
-        else if (blk === BLOCK.FREE0) cost += COST.BLOCK_FREE0;
+        else if (blockIsFree(blk)) cost += COST.BLOCK_FREE0;
 
         if (forcedOff[empId] && forcedOff[empId][i]) cost += COST.HARD;
 
@@ -3122,9 +3146,9 @@ function renderEmployeeList(){
       for (let i = 0; i < N; i++){
         if (!forcedOff[emp.id] || !forcedOff[emp.id][i]) continue;
         const blk = ed.blockByDay[i];
-        if (blk === BLOCK.FREEH) cost += COST.FORCED_URLAUB;
+        if (blockIsVacation(blk)) cost += COST.FORCED_URLAUB;
         else if (blk === BLOCK.WF) cost += COST.FORCED_WF;
-        else if (blk === BLOCK.FREE0) cost += COST.FORCED_FREE0;
+        else if (blockIsFree(blk)) cost += COST.FORCED_FREE0;
       }
     }
 
@@ -3328,7 +3352,7 @@ function renderEmployeeList(){
         for (const emp of ctx.employees){
           if (schedule.iwd[i] === emp.id || schedule.td[i] === emp.id) continue;
           const ed = ctx.empDataById[emp.id];
-          if (ed && ed.blockByDay && ed.blockByDay[i] === BLOCK.FREEH) continue;
+          if (ed && ed.blockByDay && blockIsVacation(ed.blockByDay[i])) continue;
           const isForced = Boolean(forcedOff && forcedOff[emp.id] && forcedOff[emp.id][i]);
           summary[emp.id].creditHours += getSpecialDayCredit(specialDay, { forcedOff: isForced });
         }
@@ -3604,7 +3628,7 @@ function buildScheduleAttempt({ monthKey, days, segments, employees, settings })
           const day = days[dayIdx];
           if (!isWeekday(day.date)) continue;
           const blk = getBlock(monthKey, emp.id, day.iso);
-          if (blk === BLOCK.FREEH) credit += perWeekday;
+          if (blockIsVacation(blk)) credit += perWeekday;
         }
         credit = Math.min(credit, target);
 
@@ -3630,7 +3654,7 @@ function buildScheduleAttempt({ monthKey, days, segments, employees, settings })
           const day = days[dayIdx];
           if (!isWeekday(day.date)) continue;
           const blk = getBlock(monthKey, emp.id, day.iso);
-          if (blk === BLOCK.FREEH) credit += perWeekday;
+          if (blockIsVacation(blk)) credit += perWeekday;
         }
         credit = Math.min(credit, target);
 
@@ -3715,7 +3739,7 @@ function buildScheduleAttempt({ monthKey, days, segments, employees, settings })
     if (!specialDay) return 0;
     if (schedule.iwd[dayIdx] === empId || schedule.td[dayIdx] === empId) return 0;
     const blk = getBlock(monthKey, empId, day.iso);
-    if (blk === BLOCK.FREEH) return 0;
+    if (blockIsVacation(blk)) return 0;
     const isForced = Boolean(forcedOff && forcedOff[empId] && forcedOff[empId][dayIdx]);
     return getSpecialDayCredit(specialDay, { forcedOff: isForced });
   }
@@ -3781,7 +3805,7 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
 
           if (isWeekday(day.date)){
             const blk = getBlock(monthKey, emp.id, day.iso);
-            if (blk === BLOCK.FREEH) credit += perWeekday;
+            if (blockIsVacation(blk)) credit += perWeekday;
           }
 
           specialCredit += getSpecialDayCreditForEmployee({
@@ -3922,13 +3946,13 @@ function evaluateAttempt({ monthKey, days, segments, employees, schedule, forced
       const specialDay = getSpecialDay(monthKey, day.iso);
       for (const emp of employees){
         const blk = getBlock(monthKey, emp.id, day.iso);
-        if (isWeekday(day.date) && blk === BLOCK.FREEH){
+        if (isWeekday(day.date) && blockIsVacation(blk)){
           summary[emp.id].creditHours += (emp.weeklyHours / 5);
         }
 
         if (specialDay){
           if (schedule.iwd[i] === emp.id || schedule.td[i] === emp.id) continue;
-          if (blk === BLOCK.FREEH) continue;
+          if (blockIsVacation(blk)) continue;
           const isForced = Boolean(forcedOff && forcedOff[emp.id] && forcedOff[emp.id][i]);
           summary[emp.id].creditHours += getSpecialDayCredit(specialDay, { forcedOff: isForced });
         }
@@ -4860,11 +4884,23 @@ blockTableEl.addEventListener('click', (ev) => {
     const empId = wrap.getAttribute('data-emp-id');
     const iso = wrap.getAttribute('data-iso');
     const value = btn.getAttribute('data-value');
+    const cycle = btn.getAttribute('data-cycle');
 
     if (!empId || !iso || !value) return;
 
     const current = getBlock(state.month, empId, iso);
-    const next = (current === value) ? BLOCK.NONE : value;
+    let next = (current === value) ? BLOCK.NONE : value;
+
+    if (cycle === 'vacation'){
+      next = nextBlockFromCycle(current, [BLOCK.FREEH, BLOCK.FOBI]);
+    } else if (cycle === 'free'){
+      const day = parseISODate(iso);
+      const isFirstOfMonth = day && day.getDate() === 1;
+      const options = isFirstOfMonth
+        ? [BLOCK.FREE0, BLOCK.UNI, BLOCK.SLASH]
+        : [BLOCK.FREE0, BLOCK.UNI];
+      next = nextBlockFromCycle(current, options);
+    }
 
     // WF-Limit (max. 3 pro Person / Monat)
     if (next === BLOCK.WF && current !== BLOCK.WF){

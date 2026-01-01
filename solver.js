@@ -3,7 +3,13 @@ const BLOCK = {
   FREE0: 'FREE0',
   WF: 'WF',
   FREEH: 'FREEH',
+  FOBI: 'FOBI',
+  UNI: 'UNI',
+  SLASH: 'SLASH',
 };
+
+const blockIsVacation = (blk) => blk === BLOCK.FREEH || blk === BLOCK.FOBI;
+const blockIsFree = (blk) => blk === BLOCK.FREE0 || blk === BLOCK.UNI || blk === BLOCK.SLASH;
 
 const SHIFT = {
   IWD: { key: 'IWD', label: 'IWD', hours: 20 },
@@ -157,7 +163,7 @@ function buildMonthContext({ monthKey, days, segments, employees, settings, bloc
       const day = days[i];
       const blk = getBlockFromMap(blocksByEmpId, emp.id, day.iso);
       blockByDay[i] = blk;
-      creditByDay[i] = (day.dow >= 1 && day.dow <= 5 && blk === BLOCK.FREEH) ? perWeekday : 0;
+      creditByDay[i] = (day.dow >= 1 && day.dow <= 5 && blockIsVacation(blk)) ? perWeekday : 0;
       allowedByDay[i] = !(prefs.bannedDows && prefs.bannedDows.includes(day.dow));
       preferWorkByDay[i] = Boolean(prefs.preferWorkDows && prefs.preferWorkDows.includes(day.dow));
     }
@@ -239,9 +245,9 @@ function buildMonthContext({ monthKey, days, segments, employees, settings, bloc
 
 function blockStageAllows(blk, stage){
   if (!blk || blk === BLOCK.NONE) return true;
-  if (blk === BLOCK.FREE0) return stage >= 1;
+  if (blockIsFree(blk)) return stage >= 1;
   if (blk === BLOCK.WF) return stage >= 2;
-  if (blk === BLOCK.FREEH) return stage >= 3;
+  if (blockIsVacation(blk)) return stage >= 3;
   return false;
 }
 
@@ -356,9 +362,9 @@ function scoreIwdCtx(ctx, empId, dayIdx, remainingWeek, remainingMonth, counts, 
 
   if (dayIdx + 1 < ctx.N){
     const nextBlock = ed.blockByDay[dayIdx + 1];
-    if (nextBlock === BLOCK.FREEH) score -= 800;
+    if (blockIsVacation(nextBlock)) score -= 800;
     else if (nextBlock === BLOCK.WF) score -= 500;
-    else if (nextBlock === BLOCK.FREE0) score -= 120;
+    else if (blockIsFree(nextBlock)) score -= 120;
   }
 
   if (remW < 0) score -= 900 + Math.abs(remW) * 12;
@@ -669,9 +675,9 @@ function evaluateAttemptCtx(ctx, attempt){
       if (!ed) { cost += COST.HARD; return; }
 
       const blk = ed.blockByDay[i];
-      if (blk === BLOCK.FREEH) cost += COST.BLOCK_URLAUB;
+      if (blockIsVacation(blk)) cost += COST.BLOCK_URLAUB;
       else if (blk === BLOCK.WF) cost += COST.BLOCK_WF;
-      else if (blk === BLOCK.FREE0) cost += COST.BLOCK_FREE0;
+      else if (blockIsFree(blk)) cost += COST.BLOCK_FREE0;
 
       if (forcedOff[empId] && forcedOff[empId][i]) cost += COST.HARD;
 
@@ -690,9 +696,9 @@ function evaluateAttemptCtx(ctx, attempt){
     for (let i = 0; i < N; i++){
       if (!forcedOff[emp.id] || !forcedOff[emp.id][i]) continue;
       const blk = ed.blockByDay[i];
-      if (blk === BLOCK.FREEH) cost += COST.FORCED_URLAUB;
+      if (blockIsVacation(blk)) cost += COST.FORCED_URLAUB;
       else if (blk === BLOCK.WF) cost += COST.FORCED_WF;
-      else if (blk === BLOCK.FREE0) cost += COST.FORCED_FREE0;
+      else if (blockIsFree(blk)) cost += COST.FORCED_FREE0;
     }
   }
 
@@ -726,7 +732,7 @@ function evaluateAttemptCtx(ctx, attempt){
         const specialDay = ctx.specialDayByDay ? ctx.specialDayByDay[dayIdx] : SPECIAL_DAY.NONE;
         if (specialDay){
           if (schedule.iwd[dayIdx] !== emp.id && schedule.td[dayIdx] !== emp.id){
-            if (ed.blockByDay[dayIdx] !== BLOCK.FREEH){
+            if (!blockIsVacation(ed.blockByDay[dayIdx])){
               const isForced = Boolean(forcedOff && forcedOff[emp.id] && forcedOff[emp.id][dayIdx]);
               specialCredit += getSpecialDayCredit(specialDay, { forcedOff: isForced });
             }
@@ -781,7 +787,7 @@ function evaluateAttemptCtx(ctx, attempt){
     for (const emp of ctx.employees){
       if (schedule.iwd[i] === emp.id || schedule.td[i] === emp.id) continue;
       const ed = ctx.empDataById[emp.id];
-      if (ed && ed.blockByDay[i] === BLOCK.FREEH) continue;
+      if (ed && blockIsVacation(ed.blockByDay[i])) continue;
       const isForced = Boolean(forcedOff && forcedOff[emp.id] && forcedOff[emp.id][i]);
       specialCreditByEmp[emp.id] += getSpecialDayCredit(specialDay, { forcedOff: isForced });
     }
@@ -915,7 +921,7 @@ function buildMonthSummaryCtx(ctx, schedule, forcedOff){
       for (const emp of ctx.employees){
         if (schedule.iwd[i] === emp.id || schedule.td[i] === emp.id) continue;
         const ed = ctx.empDataById[emp.id];
-        if (ed && ed.blockByDay && ed.blockByDay[i] === BLOCK.FREEH) continue;
+        if (ed && ed.blockByDay && blockIsVacation(ed.blockByDay[i])) continue;
         const isForced = Boolean(forcedOff && forcedOff[emp.id] && forcedOff[emp.id][i]);
         summary[emp.id].creditHours += getSpecialDayCredit(specialDay, { forcedOff: isForced });
       }
