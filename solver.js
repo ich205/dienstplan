@@ -35,6 +35,12 @@ function round1(n){
   return Math.round(n * 10) / 10;
 }
 
+function maxWorkDaysForEmp(emp){
+  const weekly = Number(emp?.weeklyHours) || 0;
+  const days = Math.round(weekly / 5);
+  return clamp(days, 1, 6);
+}
+
 function normalizeSpecialDay(value){
   if (value === null || typeof value === 'undefined' || value === '') return SPECIAL_DAY.NONE;
   const normalized = String(value).toUpperCase();
@@ -61,6 +67,7 @@ function defaultEmpPrefs(){
     preferWorkDows: [],
     weekendBias: 0,
     preferSpecialWithIwd: false,
+    collectOvertime: false,
     maxIwdPerWeek: null,
     maxTdPerWeek: null,
     maxIwdPerMonth: null,
@@ -104,6 +111,10 @@ function sanitizePrefs(prefs){
     ? Boolean(p.preferSpecialWithIwd)
     : Boolean(base.preferSpecialWithIwd);
 
+  const collectOvertime = ('collectOvertime' in p)
+    ? Boolean(p.collectOvertime)
+    : Boolean(base.collectOvertime);
+
   const normLimit = (v) => {
     if (v === null || typeof v === 'undefined' || v === '') return null;
     const n = Math.round(Number(v));
@@ -127,6 +138,7 @@ function sanitizePrefs(prefs){
     preferWorkDows,
     weekendBias,
     preferSpecialWithIwd,
+    collectOvertime,
     maxIwdPerWeek,
     maxTdPerWeek,
     maxIwdPerMonth,
@@ -227,6 +239,14 @@ function buildMonthContext({ monthKey, days, segments, employees, settings, bloc
     return total;
   });
 
+  const segUnderTarget = segments.map((seg, si) => {
+    const baseIwd = seg.indices.length * SHIFT.IWD.hours;
+    const required = segRequiredTotal[si] || 0;
+    return required < baseIwd;
+  });
+
+  const hasUnderTarget = segUnderTarget.some(Boolean);
+
   const resolvedTdRequiredByDay = Array.isArray(tdRequiredByDay)
     ? tdRequiredByDay.slice(0, N).map(Boolean)
     : Array(N).fill(false);
@@ -244,6 +264,8 @@ function buildMonthContext({ monthKey, days, segments, employees, settings, bloc
     segIdByDay,
     empDataById,
     segRequiredTotal,
+    segUnderTarget,
+    hasUnderTarget,
     tdRequiredByDay: resolvedTdRequiredByDay,
     specialDayByDay: resolvedSpecialDayByDay,
   };
@@ -315,6 +337,10 @@ function scoreIwdCtx(ctx, empId, dayIdx, remainingWeek, remainingMonth, counts, 
   if (!ed) return -Infinity;
   const prefs = ed.prefs;
 
+  const segIdx = ctx.segIdByDay[dayIdx];
+  const underTarget = Boolean(ctx.segUnderTarget && ctx.segUnderTarget[segIdx]);
+  const overtimeOptIn = underTarget && prefs.collectOvertime;
+
   const remW = (remainingWeek && typeof remainingWeek[empId] === 'number') ? remainingWeek[empId] : 0;
   const remM = (remainingMonth && typeof remainingMonth[empId] === 'number') ? remainingMonth[empId] : 0;
 
@@ -334,6 +360,16 @@ function scoreIwdCtx(ctx, empId, dayIdx, remainingWeek, remainingMonth, counts, 
     : SPECIAL_DAY.NONE;
 
   let score = 0;
+
+  const maxDays = prefs.collectOvertime ? maxWorkDaysForEmp(ed.emp) : null;
+  const workedDays = (weekCounts && weekCounts.iwd && weekCounts.td)
+    ? (weekCounts.iwd[empId] || 0) + (weekCounts.td[empId] || 0)
+    : 0;
+  if (maxDays !== null && workedDays >= maxDays){
+    score -= 1200 + (workedDays - maxDays + 1) * 1200;
+  }
+
+  if (overtimeOptIn) score += 220;
 
   if (!ed.allowedByDay[dayIdx]) score -= 260;
   if (prefs.allowIWD === false) score -= 900;
@@ -384,7 +420,10 @@ function scoreIwdCtx(ctx, empId, dayIdx, remainingWeek, remainingMonth, counts, 
     else if (blockIsFree(nextBlock)) score -= 120;
   }
 
-  if (remW < 0) score -= 900 + Math.abs(remW) * 12;
+  if (remW < 0){
+    if (overtimeOptIn) score += Math.min(500, Math.abs(remW) * 0.8);
+    else score -= 900 + Math.abs(remW) * 12;
+  }
   if (remM < 0) score -= 400 + Math.abs(remM) * 4;
 
   score += (Math.random() - 0.5) * 40;
@@ -395,6 +434,10 @@ function scoreTdCtx(ctx, empId, dayIdx, remainingWeek, remainingMonth, counts, w
   const ed = ctx.empDataById[empId];
   if (!ed) return -Infinity;
   const prefs = ed.prefs;
+
+  const segIdx = ctx.segIdByDay[dayIdx];
+  const underTarget = Boolean(ctx.segUnderTarget && ctx.segUnderTarget[segIdx]);
+  const overtimeOptIn = underTarget && prefs.collectOvertime;
 
   const remW = (remainingWeek && typeof remainingWeek[empId] === 'number') ? remainingWeek[empId] : 0;
   const remM = (remainingMonth && typeof remainingMonth[empId] === 'number') ? remainingMonth[empId] : 0;
@@ -412,6 +455,16 @@ function scoreTdCtx(ctx, empId, dayIdx, remainingWeek, remainingMonth, counts, w
   const specialToday = ctx.specialDayByDay ? ctx.specialDayByDay[dayIdx] : SPECIAL_DAY.NONE;
 
   let score = 0;
+
+  const maxDays = prefs.collectOvertime ? maxWorkDaysForEmp(ed.emp) : null;
+  const workedDays = (weekCounts && weekCounts.iwd && weekCounts.td)
+    ? (weekCounts.iwd[empId] || 0) + (weekCounts.td[empId] || 0)
+    : 0;
+  if (maxDays !== null && workedDays >= maxDays){
+    score -= 900 + (workedDays - maxDays + 1) * 1200;
+  }
+
+  if (overtimeOptIn) score += 160;
 
   if (!ed.allowedByDay[dayIdx]) score -= 200;
   if (prefs.allowTD === false) score -= 750;
@@ -445,7 +498,10 @@ function scoreTdCtx(ctx, empId, dayIdx, remainingWeek, remainingMonth, counts, w
     score -= Math.max(0, tCount - iCount) * 20;
   }
 
-  if (remW < 0) score -= 500 + Math.abs(remW) * 6;
+  if (remW < 0){
+    if (overtimeOptIn) score += Math.min(400, Math.abs(remW) * 0.6);
+    else score -= 500 + Math.abs(remW) * 6;
+  }
   if (remM < 0) score -= 220 + Math.abs(remM) * 3;
 
   score += (Math.random() - 0.5) * 30;
@@ -774,12 +830,22 @@ function evaluateAttemptCtx(ctx, attempt){
 
       const total = work + credit + specialCredit;
       const delta = total - target;
+      const allowOvertime = Boolean(ctx.segUnderTarget && ctx.segUnderTarget[si] && ed.prefs.collectOvertime);
+      const deltaForCost = (allowOvertime && delta > 0) ? 0 : delta;
 
-      cost += Math.abs(delta) * 50 + (delta > 0 ? delta * 25 : 0);
+      cost += Math.abs(deltaForCost) * 50 + (deltaForCost > 0 ? deltaForCost * 25 : 0);
 
       const p = ed.prefs;
       if (p.maxIwdPerWeek != null && iwdC > p.maxIwdPerWeek) cost += (iwdC - p.maxIwdPerWeek) * 600;
       if (p.maxTdPerWeek != null && tdC > p.maxTdPerWeek) cost += (tdC - p.maxTdPerWeek) * 450;
+
+      if (p.collectOvertime){
+        const maxDays = maxWorkDaysForEmp(ed.emp);
+        const workedDays = iwdC + tdC;
+        if (workedDays > maxDays){
+          cost += (workedDays - maxDays) * 1_200_000;
+        }
+      }
     }
   }
 
@@ -833,22 +899,24 @@ function evaluateAttemptCtx(ctx, attempt){
       + (ed.monthCredit || 0)
       + (specialCreditByEmp[emp.id] || 0);
     const delta = total - (ed.monthDesiredTarget || 0);
-    maxDelta = Math.max(maxDelta, delta);
-    minDelta = Math.min(minDelta, delta);
+    const allowMonthOvertime = Boolean(ctx.hasUnderTarget && ed.prefs.collectOvertime);
+    const deltaForCost = (allowMonthOvertime && delta > 0) ? 0 : delta;
+    maxDelta = Math.max(maxDelta, deltaForCost);
+    minDelta = Math.min(minDelta, deltaForCost);
 
-    if (delta >= -10 && delta <= 4){
-      cost += Math.abs(delta) * 8;
-      if (delta > 0) cost += delta * 12;
-    } else if (delta >= -20 && delta <= 12){
-      cost += Math.abs(delta) * 120;
-      if (delta > 0) cost += delta * 50;
+    if (deltaForCost >= -10 && deltaForCost <= 4){
+      cost += Math.abs(deltaForCost) * 8;
+      if (deltaForCost > 0) cost += deltaForCost * 12;
+    } else if (deltaForCost >= -20 && deltaForCost <= 12){
+      cost += Math.abs(deltaForCost) * 120;
+      if (deltaForCost > 0) cost += deltaForCost * 50;
     } else {
-      cost += Math.abs(delta) * 320;
-      if (delta > 0) cost += delta * 200;
+      cost += Math.abs(deltaForCost) * 320;
+      if (deltaForCost > 0) cost += deltaForCost * 200;
     }
 
-    if (delta > 20){
-      cost += (delta - 20) * 2000;
+    if (deltaForCost > 20){
+      cost += (deltaForCost - 20) * 2000;
     }
 
     const p = ed.prefs;

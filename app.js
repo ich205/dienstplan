@@ -317,6 +317,12 @@
     return Math.round(n * 10) / 10;
   }
 
+  function maxWorkDaysForEmp(emp){
+    const weekly = Number(emp?.weeklyHours) || 0;
+    const days = Math.round(weekly / 5);
+    return clamp(days, 1, 6);
+  }
+
   function isPlainObject(value){
     return !!value && typeof value === 'object' && !Array.isArray(value);
   }
@@ -437,6 +443,9 @@
       // Wochenend-Neigung: -1 = ungern, 0 = neutral, +1 = bevorzugt
       weekendBias: 0,
 
+      // Überstunden sammeln (wenn Wochen-Soll unter Pflichtstunden liegt)
+      collectOvertime: false,
+
       // Limits (optional): max Anzahl pro Woche/Monat
       maxIwdPerWeek: null,
       maxTdPerWeek: null,
@@ -482,6 +491,10 @@
       ? Boolean(p.preferSpecialWithIwd)
       : Boolean(base.preferSpecialWithIwd);
 
+    const collectOvertime = ('collectOvertime' in p)
+      ? Boolean(p.collectOvertime)
+      : Boolean(base.collectOvertime);
+
     const rareCommuteSpecial = ('rareCommuteSpecial' in p)
       ? Boolean(p.rareCommuteSpecial)
       : Boolean(base.rareCommuteSpecial);
@@ -509,6 +522,7 @@
       preferWorkDows,
       weekendBias,
       preferSpecialWithIwd,
+      collectOvertime,
       rareCommuteSpecial,
       maxIwdPerWeek,
       maxTdPerWeek,
@@ -551,6 +565,11 @@
 
     if (/(seltener|selten|weniger)\s*anreise?n?/.test(t)){
       prefs.rareCommuteSpecial = true;
+    }
+
+    // Überstunden sammeln (nur wenn Woche unter Soll)
+    if (/\bü\s*berstunden\s*(sammeln|aufbauen)\b/.test(t) || /\bueberstunden\s*(sammeln|aufbauen)\b/.test(t)){
+      prefs.collectOvertime = true;
     }
 
     // "SV/Team nur mit Dienst oder /" => Seltener Anreisen aktivieren
@@ -1678,6 +1697,7 @@
     if (p.weekendBias === -1) parts.push('Wochenende ungern');
     if (p.preferSpecialWithIwd) parts.push('SV/Team + IWD oder / bevorzugt');
     if (p.rareCommuteSpecial) parts.push('SV/Team nur mit Dienst oder / (seltener anreisen)');
+    if (p.collectOvertime) parts.push('Überstunden sammeln (bei Wochen-Unterdeckung)');
 
     // Limits
     if (p.maxIwdPerWeek !== null && typeof p.maxIwdPerWeek === 'number') parts.push(`max IWD/Woche: ${p.maxIwdPerWeek}`);
@@ -1704,6 +1724,7 @@
           <li><code>wochenende bevorzugt</code> / <code>wochenende ungern</code> (weich)</li>
           <li><code>max 1 IWD pro Woche</code> / <code>max 3 TD Monat</code></li>
           <li><code>seltener anreisen</code> (SV/Team möglichst mit Dienst oder /)</li>
+          <li><code>Überstunden sammeln</code> (bei Wochen-Unterdeckung kein Malus für Plusstunden)</li>
         </ul>
       </span>
     </span>
@@ -3015,6 +3036,14 @@ function renderEmployeeList(){
       return total;
     });
 
+    const segUnderTarget = segments.map((seg, si) => {
+      const baseIwd = seg.indices.length * SHIFT.IWD.hours;
+      const required = segRequiredTotal[si] || 0;
+      return required < baseIwd;
+    });
+
+    const hasUnderTarget = segUnderTarget.some(Boolean);
+
     // TD Pflicht (global pro Tag)
     const tdRequiredByDay = Array(N).fill(false);
     for (let i = 0; i < N; i++){
@@ -3036,6 +3065,8 @@ function renderEmployeeList(){
       segIdByDay,
       empDataById,
       segRequiredTotal,
+      segUnderTarget,
+      hasUnderTarget,
       tdRequiredByDay,
       specialDayByDay,
     };
@@ -3120,6 +3151,10 @@ function renderEmployeeList(){
     if (!ed) return -Infinity;
     const prefs = ed.prefs;
 
+    const segIdx = ctx.segIdByDay[dayIdx];
+    const underTarget = Boolean(ctx.segUnderTarget && ctx.segUnderTarget[segIdx]);
+    const overtimeOptIn = underTarget && prefs.collectOvertime;
+
     const remW = (remainingWeek && typeof remainingWeek[empId] === 'number') ? remainingWeek[empId] : 0;
     const remM = (remainingMonth && typeof remainingMonth[empId] === 'number') ? remainingMonth[empId] : 0;
 
@@ -3139,6 +3174,16 @@ function renderEmployeeList(){
       : SPECIAL_DAY.NONE;
 
     let score = 0;
+
+    const maxDays = prefs.collectOvertime ? maxWorkDaysForEmp(ed.emp) : null;
+    const workedDays = (weekCounts && weekCounts.iwd && weekCounts.td)
+      ? (weekCounts.iwd[empId] || 0) + (weekCounts.td[empId] || 0)
+      : 0;
+    if (maxDays !== null && workedDays >= maxDays){
+      score -= 1200 + (workedDays - maxDays + 1) * 1200;
+    }
+
+    if (overtimeOptIn) score += 220;
 
     // Sonderwünsche (weich, Prio 5)
     // (wird bewusst nicht hart ausgeschlossen – nur bestraft)
@@ -3203,7 +3248,10 @@ function renderEmployeeList(){
     }
 
     // Vermeide starke Überplanung
-    if (remW < 0) score -= 900 + Math.abs(remW) * 12;
+    if (remW < 0){
+      if (overtimeOptIn) score += Math.min(500, Math.abs(remW) * 0.8);
+      else score -= 900 + Math.abs(remW) * 12;
+    }
     if (remM < 0) score -= 400 + Math.abs(remM) * 4;
 
     // etwas Zufall für Vielfalt
@@ -3215,6 +3263,10 @@ function renderEmployeeList(){
     const ed = ctx.empDataById[empId];
     if (!ed) return -Infinity;
     const prefs = ed.prefs;
+
+    const segIdx = ctx.segIdByDay[dayIdx];
+    const underTarget = Boolean(ctx.segUnderTarget && ctx.segUnderTarget[segIdx]);
+    const overtimeOptIn = underTarget && prefs.collectOvertime;
 
     const remW = (remainingWeek && typeof remainingWeek[empId] === 'number') ? remainingWeek[empId] : 0;
     const remM = (remainingMonth && typeof remainingMonth[empId] === 'number') ? remainingMonth[empId] : 0;
@@ -3232,6 +3284,16 @@ function renderEmployeeList(){
     const specialToday = ctx.specialDayByDay ? ctx.specialDayByDay[dayIdx] : SPECIAL_DAY.NONE;
 
     let score = 0;
+
+    const maxDays = prefs.collectOvertime ? maxWorkDaysForEmp(ed.emp) : null;
+    const workedDays = (weekCounts && weekCounts.iwd && weekCounts.td)
+      ? (weekCounts.iwd[empId] || 0) + (weekCounts.td[empId] || 0)
+      : 0;
+    if (maxDays !== null && workedDays >= maxDays){
+      score -= 900 + (workedDays - maxDays + 1) * 1200;
+    }
+
+    if (overtimeOptIn) score += 160;
 
     // Sonderwünsche (weich, Prio 5)
     if (!ed.allowedByDay[dayIdx]) score -= 200;
@@ -3278,7 +3340,10 @@ function renderEmployeeList(){
     }
 
     // Vermeide starke Überplanung
-    if (remW < 0) score -= 500 + Math.abs(remW) * 6;
+    if (remW < 0){
+      if (overtimeOptIn) score += Math.min(400, Math.abs(remW) * 0.6);
+      else score -= 500 + Math.abs(remW) * 6;
+    }
     if (remM < 0) score -= 220 + Math.abs(remM) * 3;
 
     score += (Math.random() - 0.5) * 30;
@@ -3597,13 +3662,23 @@ function renderEmployeeList(){
 
         const total = work + credit;
         const delta = total - target;
+        const allowOvertime = Boolean(ctx.segUnderTarget && ctx.segUnderTarget[si] && ed.prefs.collectOvertime);
+        const deltaForCost = (allowOvertime && delta > 0) ? 0 : delta;
 
-        cost += Math.abs(delta) * 50 + (delta > 0 ? delta * 25 : 0);
+        cost += Math.abs(deltaForCost) * 50 + (deltaForCost > 0 ? deltaForCost * 25 : 0);
 
         // Week limits
         const p = ed.prefs;
         if (p.maxIwdPerWeek != null && iwdC > p.maxIwdPerWeek) cost += (iwdC - p.maxIwdPerWeek) * 600;
         if (p.maxTdPerWeek != null && tdC > p.maxTdPerWeek) cost += (tdC - p.maxTdPerWeek) * 450;
+
+        if (p.collectOvertime){
+          const maxDays = maxWorkDaysForEmp(ed.emp);
+          const workedDays = iwdC + tdC;
+          if (workedDays > maxDays){
+            cost += (workedDays - maxDays) * 1_200_000;
+          }
+        }
       }
     }
 
@@ -3639,22 +3714,24 @@ function renderEmployeeList(){
 
       const total = (workHours[emp.id] || 0) + (ed.monthCredit || 0);
       const delta = total - (ed.monthDesiredTarget || 0);
-      maxDelta = Math.max(maxDelta, delta);
-      minDelta = Math.min(minDelta, delta);
+      const allowMonthOvertime = Boolean(ctx.hasUnderTarget && ed.prefs.collectOvertime);
+      const deltaForCost = (allowMonthOvertime && delta > 0) ? 0 : delta;
+      maxDelta = Math.max(maxDelta, deltaForCost);
+      minDelta = Math.min(minDelta, deltaForCost);
 
-      if (delta >= -10 && delta <= 4){
-        cost += Math.abs(delta) * 8;
-        if (delta > 0) cost += delta * 12;
-      } else if (delta >= -20 && delta <= 12){
-        cost += Math.abs(delta) * 120;
-        if (delta > 0) cost += delta * 50;
+      if (deltaForCost >= -10 && deltaForCost <= 4){
+        cost += Math.abs(deltaForCost) * 8;
+        if (deltaForCost > 0) cost += deltaForCost * 12;
+      } else if (deltaForCost >= -20 && deltaForCost <= 12){
+        cost += Math.abs(deltaForCost) * 120;
+        if (deltaForCost > 0) cost += deltaForCost * 50;
       } else {
-        cost += Math.abs(delta) * 320;
-        if (delta > 0) cost += delta * 200;
+        cost += Math.abs(deltaForCost) * 320;
+        if (deltaForCost > 0) cost += deltaForCost * 200;
       }
 
-      if (delta > 20){
-        cost += (delta - 20) * 2000;
+      if (deltaForCost > 20){
+        cost += (deltaForCost - 20) * 2000;
       }
 
       // Month limits
