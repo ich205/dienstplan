@@ -980,7 +980,7 @@
     try{
       if (!cacheApiSupported()){
         updateCacheUi();
-        return;
+        return false;
       }
 
       const [handle, dirHandle, logHandle] = await Promise.all([
@@ -992,6 +992,7 @@
       if (handle) cacheFileHandle = handle;
       if (logHandle) cacheLogHandle = logHandle;
       updateCacheUi();
+      return !!cacheFileHandle;
     }catch(e){
       console.warn('Cache-Handle konnte nicht geladen werden', e);
       cacheFileHandle = null;
@@ -999,6 +1000,7 @@
       cacheLogHandle = null;
       setCacheError('Cache-Handle konnte nicht geladen werden');
       updateCacheUi();
+      return false;
     }
   }
 
@@ -1084,10 +1086,10 @@
   }
 
   async function loadFromCacheFile(){
-    if (!cacheFileHandle) return;
+    if (!cacheFileHandle) return false;
     try{
       const perm = await cacheFileHandle.requestPermission({ mode: 'read' });
-      if (perm !== 'granted') return;
+      if (perm !== 'granted') return false;
 
       const file = await cacheFileHandle.getFile();
       const text = await file.text();
@@ -1098,10 +1100,12 @@
       loadProjectObject(obj);
       await appendCacheLog('Cache-Datei geladen.');
       setCacheStatus(`✅ Aus Cache-Datei geladen (${formatDateTime(new Date())})`);
+      return true;
     }catch(e){
       console.warn('Aus Cache-Datei laden fehlgeschlagen', e);
       setCacheError('Laden fehlgeschlagen');
       await appendCacheLog(`Fehler beim Laden: ${String(e && e.message ? e.message : e)}`);
+      return false;
     }
   }
 
@@ -5412,8 +5416,15 @@ self.onmessage = async (e) => {
     }
   });
 
-  ensureCacheHandleLoaded();
+  async function initApp(){
+    const hasCacheHandle = await ensureCacheHandleLoaded();
+    const cacheLoaded = hasCacheHandle ? await loadFromCacheFile() : false;
 
-  renderAll();
+    if (!cacheLoaded){
+      renderAll();
+    }
+  }
+
+  void initApp();
 
 })();
